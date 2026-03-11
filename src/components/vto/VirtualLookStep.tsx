@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useVTO } from '@/contexts/VTOContext';
-import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,7 +9,14 @@ import { updateSessionGeneratedLook } from '@/hooks/useVTOSession';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import { extractBodyMeasurements, BodyMeasurements } from '@/hooks/useBodyMeasurements';
 
+interface ModelResultInfo {
+  model: string;
+  success: boolean;
+  error?: string;
+  durationMs: number;
+}
 
 export const VirtualLookStep: React.FC = () => {
   const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId } = useVTO();
@@ -27,6 +34,42 @@ export const VirtualLookStep: React.FC = () => {
   const [userPhone, setUserPhone] = useState('');
   const [detailsSaved, setDetailsSaved] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+
+  // Multi-model info
+  const [modelWinner, setModelWinner] = useState<string | null>(null);
+  const [modelReasoning, setModelReasoning] = useState<string>('');
+  const [modelResults, setModelResults] = useState<ModelResultInfo[]>([]);
+
+  // Body measurements
+  const [measurements, setMeasurements] = useState<BodyMeasurements | null>(null);
+  const [measuringInProgress, setMeasuringInProgress] = useState(false);
+
+  // Load model comparison info from sessionStorage
+  useEffect(() => {
+    const winner = sessionStorage.getItem('vto_model_winner');
+    const reasoning = sessionStorage.getItem('vto_model_reasoning');
+    const results = sessionStorage.getItem('vto_model_results');
+    if (winner) setModelWinner(winner);
+    if (reasoning) setModelReasoning(reasoning);
+    if (results) {
+      try { setModelResults(JSON.parse(results)); } catch {}
+    }
+  }, []);
+
+  // Auto-extract body measurements from full-body photo
+  useEffect(() => {
+    const fullBody = capturedImages.fullBody || sessionStorage.getItem('vto_full_body');
+    if (!fullBody || measurements || measuringInProgress) return;
+
+    setMeasuringInProgress(true);
+    extractBodyMeasurements(fullBody, 170).then((m) => {
+      if (m) {
+        setMeasurements(m);
+        sessionStorage.setItem('vto_measurements', JSON.stringify(m));
+      }
+      setMeasuringInProgress(false);
+    });
+  }, [capturedImages.fullBody]);
 
   // Play completion sound
   const playCompletionSound = () => {
@@ -524,6 +567,68 @@ export const VirtualLookStep: React.FC = () => {
               </button>
 
             </div>
+
+            {/* Model Winner Badge */}
+            {modelWinner && (
+              <div className="glass-card rounded-2xl p-4 border border-amber-500/30 bg-amber-50/5">
+                <div className="flex items-center gap-2 mb-2">
+                  <Trophy className="w-4 h-4 text-amber-500" />
+                  <h3 className="text-sm font-semibold text-foreground">AI Model: {modelWinner}</h3>
+                </div>
+                {modelReasoning && (
+                  <p className="text-xs text-muted-foreground leading-relaxed">{modelReasoning}</p>
+                )}
+                {modelResults.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {modelResults.map((r, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs">
+                        <span className={`font-medium ${r.model === modelWinner ? 'text-amber-600' : 'text-muted-foreground'}`}>
+                          {r.model}
+                        </span>
+                        <span className={r.success ? 'text-green-600' : 'text-red-400'}>
+                          {r.success ? `${(r.durationMs / 1000).toFixed(1)}s` : 'Failed'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Body Measurements */}
+            {(measurements || measuringInProgress) && (
+              <div className="glass-card rounded-2xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Ruler className="w-4 h-4 text-primary" />
+                  <h3 className="text-sm font-semibold text-foreground">Estimated Measurements</h3>
+                </div>
+                {measuringInProgress && !measurements ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Analyzing body proportions...
+                  </div>
+                ) : measurements ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Shoulder</span><span className="font-medium">{measurements.shoulderWidth} cm</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Chest</span><span className="font-medium">{measurements.chestEstimate} cm</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Waist</span><span className="font-medium">{measurements.waistEstimate} cm</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Hip</span><span className="font-medium">{measurements.hipWidth} cm</span></div>
+                    </div>
+                    <div className="flex gap-2 mt-2">
+                      <div className="flex-1 bg-primary/10 rounded-lg px-3 py-1.5 text-center">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Top</p>
+                        <p className="text-sm font-bold text-primary">{measurements.topSize}</p>
+                      </div>
+                      <div className="flex-1 bg-primary/10 rounded-lg px-3 py-1.5 text-center">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Bottom</p>
+                        <p className="text-sm font-bold text-primary">{measurements.bottomSize}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             {/* Selected Items */}
             <div className="glass-card rounded-2xl p-5">

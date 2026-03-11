@@ -149,11 +149,14 @@ export const OutfitSelectionStep: React.FC = () => {
 
     try {
       const outfitImageBase64 = await imageUrlToBase64(item.imageUrl);
-      console.log('[VTO] Calling generate-virtual-tryon...');
+      console.log('[VTO] Calling multi-model generate-virtual-tryon...');
 
-      // Use AbortController to timeout after 120s
+      // Also send selfie for multi-image models (OmniGen)
+      const selfieImage = capturedImages.selfie || sessionStorage.getItem('vto_selfie_preview') || null;
+
+      // Use AbortController to timeout after 180s (multi-model takes longer)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120_000);
+      const timeoutId = setTimeout(() => controller.abort(), 180_000);
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-virtual-tryon`,
@@ -166,7 +169,10 @@ export const OutfitSelectionStep: React.FC = () => {
           },
           body: JSON.stringify({
             fullBodyImage: fullBodyImage,
+            selfieImage: selfieImage,
             outfitImageUrls: [outfitImageBase64],
+            category: item.category === 'bottomwear' ? 'lower_body' : item.category === 'footwear' ? 'lower_body' : 'upper_body',
+            garmentDescription: item.name,
           }),
           signal: controller.signal,
         }
@@ -206,6 +212,14 @@ export const OutfitSelectionStep: React.FC = () => {
         sessionStorage.removeItem('vto_layered_base');
         setExcludedCategory(null);
         setGeneratedLook(data.imageUrl);
+
+        // Store multi-model comparison info for the result screen
+        if (data.winner) {
+          sessionStorage.setItem('vto_model_winner', data.winner);
+          sessionStorage.setItem('vto_model_reasoning', data.reasoning || '');
+          sessionStorage.setItem('vto_model_results', JSON.stringify(data.modelResults || []));
+        }
+
         if (activeSessionId && activeToken) {
           await updateSessionGeneratedLook(activeSessionId, activeToken, data.imageUrl);
         }
