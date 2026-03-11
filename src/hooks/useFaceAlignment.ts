@@ -16,11 +16,11 @@ export interface FaceAlignmentState {
 }
 
 // ─── tuneable constants ────────────────────────────────────────────────────
-const HOLD_FRAMES      = 24;   // ~0.8 s at 30 fps before countdown starts
+const HOLD_FRAMES      = 36;   // ~1.2 s at 30 fps before countdown starts (more stable)
 const COUNTDOWN_FROM   = 3;    // seconds
-const MIN_AREA_RATIO   = 0.18; // face must fill ≥ 18 % of oval area  (was 0.35)
-const MAX_AREA_RATIO   = 2.2;  // face must fill ≤ 220 % of oval area (was 1.6)
-const MAX_OFFSET_RATIO = 0.55; // face centre may deviate ≤ 55 % of oval radius (was 0.22)
+const MIN_AREA_RATIO   = 0.30; // face must fill ≥ 30 % of oval area (ensures face is close enough)
+const MAX_AREA_RATIO   = 1.8;  // face must fill ≤ 180 % of oval area
+const MAX_OFFSET_RATIO = 0.30; // face centre may deviate ≤ 30 % of oval radius (tighter centering)
 // ──────────────────────────────────────────────────────────────────────────
 
 declare global {

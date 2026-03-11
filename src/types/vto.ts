@@ -31,4 +31,4 @@ export interface CapturedImages {
   fullBody: string | null;
 }
 
-export type VTOStep = 1 | 1.5 | 2 | 2.5 | 2.75 | 3 | 4;
+export type VTOStep = 1 | 1.25 | 1.5 | 2 | 2.5 | 2.75 | 3 | 4;

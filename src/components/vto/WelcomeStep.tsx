@@ -46,7 +46,7 @@ export const WelcomeStep: React.FC = () => {
     setLoadingSkip(true);
     try {
       const result = await createSession();
-      if (result) setCurrentStep(2);
+      if (result) setCurrentStep(1.25);
     } catch {
       toast.error('Something went wrong. Please try again.');
     } finally {

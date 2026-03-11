@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useVTO } from '@/contexts/VTOContext';
 import { WelcomeStep } from './WelcomeStep';
+import { JourneyIntroStep } from './JourneyIntroStep';
 import { QRWaitStep } from './QRWaitStep';
 import { SelfieCaptureStep } from './SelfieCaptureStep';
 import { FullBodyCaptureStep } from './FullBodyCaptureStep';
@@ -77,6 +78,7 @@ export const VTOApp: React.FC = () => {
   }
 
   // Full-screen steps (no header/footer)
+  if (currentStep === 1.25) return <JourneyIntroStep />;
   if (currentStep === 1.5) return <QRWaitStep />;
   if (currentStep === 2) return <SelfieCaptureStep />;
   if (currentStep === 2.75) return <BigScreenHandoffStep />;

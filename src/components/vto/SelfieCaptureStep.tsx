@@ -143,7 +143,7 @@ const AutoConfirmOverlay: React.FC<{
   onConfirm: () => void;
   isSaving: boolean;
 }> = ({ photo, onRetake, onConfirm, isSaving }) => {
-  const [remaining, setRemaining] = useState(2);
+  const [remaining, setRemaining] = useState(5);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -167,8 +167,11 @@ const AutoConfirmOverlay: React.FC<{
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/80" />
         <div className="absolute top-8 left-0 right-0 text-center">
           <h2 className="text-2xl font-display font-semibold text-white drop-shadow-lg">
-            {isSaving ? 'Saving…' : `Saving in ${remaining}s`}
+            {isSaving ? 'Saving…' : 'Looking good?'}
           </h2>
+          <p className="text-white/70 text-base mt-1">
+            {isSaving ? '' : `Auto-saving in ${remaining}s · Tap Retake to try again`}
+          </p>
         </div>
       </div>
       <div className="absolute bottom-0 left-0 right-0 p-8 flex gap-6 justify-center">
@@ -210,7 +213,13 @@ export const SelfieCaptureStep: React.FC = () => {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode, width: { ideal: 4096 }, height: { ideal: 4096 } },
+        video: {
+          facingMode,
+          width: { ideal: 1920, min: 1280 },
+          height: { ideal: 1920, min: 1280 },
+          // Request higher quality auto-focus and exposure
+          ...(facingMode === 'user' ? {} : { focusMode: 'continuous' as any }),
+        },
         audio: false,
       });
       streamRef.current = stream;
@@ -241,7 +250,8 @@ export const SelfieCaptureStep: React.FC = () => {
     if (ctx) {
       if (facingMode === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
       ctx.drawImage(video, 0, 0);
-      const photo = canvas.toDataURL('image/png');
+      // Use JPEG at 92% quality for much smaller file sizes (vs PNG)
+      const photo = canvas.toDataURL('image/jpeg', 0.92);
       setCapturedPhoto(photo);
       setMode('preview');
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());

@@ -6,7 +6,7 @@ import trendsLogo from '@/assets/trends-logo.png';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const AUTO_CAPTURE_SECONDS = 5;
+const AUTO_CAPTURE_SECONDS = 8;
 
 type CapturePhase = 'selfie' | 'fullbody';
 type CaptureMode = 'camera' | 'preview';
@@ -140,7 +140,7 @@ const AutoTimerPill: React.FC<{ seconds: number; onCaptureNow: () => void }> = (
 
 // ─── Preview / confirm overlay ──────────────────────────────────────────────
 const AutoConfirmOverlay: React.FC<{ photo: string; onRetake: () => void; onConfirm: () => void; isSaving: boolean; label: string }> = ({ photo, onRetake, onConfirm, isSaving, label }) => {
-  const [remaining, setRemaining] = useState(2);
+  const [remaining, setRemaining] = useState(5);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     intervalRef.current = setInterval(() => {
@@ -159,8 +159,11 @@ const AutoConfirmOverlay: React.FC<{ photo: string; onRetake: () => void; onConf
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/80" />
         <div className="absolute top-8 left-0 right-0 text-center">
           <h2 className="text-2xl font-display font-semibold text-white drop-shadow-lg">
-            {isSaving ? 'Saving…' : `Saving in ${remaining}s`}
+            {isSaving ? 'Saving…' : 'Looking good?'}
           </h2>
+          <p className="text-white/70 text-base mt-1">
+            {isSaving ? '' : `Auto-saving in ${remaining}s · Tap Retake to try again`}
+          </p>
         </div>
       </div>
       <div className="absolute bottom-0 left-0 right-0 p-8 flex gap-6 justify-center">
@@ -332,7 +335,8 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
     if (ctx) {
       // No mirroring — always environment/rear camera on display
       ctx.drawImage(video, 0, 0);
-      setCapturedPhoto(canvas.toDataURL('image/png'));
+      // Use JPEG at 92% quality for much smaller file sizes (vs PNG)
+      setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.92));
       setMode('preview');
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     }
