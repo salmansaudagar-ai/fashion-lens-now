@@ -1,0 +1,25 @@
+project_id = "eyngfillvwsutqmhpyho"
+
+[functions.validate-admin-pin]
+verify_jwt = false
+
+[functions.admin-catalog]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false
+
+[functions.update-video-url]
+verify_jwt = false
+
+[functions.create-session]
+verify_jwt = false
+
+[functions.update-session]
+verify_jwt = false
+
+[functions.generate-virtual-tryon]
+verify_jwt = false
+
+[functions.generate-360-video]
+verify_jwt = false

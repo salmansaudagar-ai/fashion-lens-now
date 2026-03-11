@@ -1,0 +1,1 @@
+ALTER TABLE public.catalog_items ADD COLUMN IF NOT EXISTS price numeric(10,2) NOT NULL DEFAULT 0;
