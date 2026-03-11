@@ -78,7 +78,7 @@ interface ModelResult {
   durationMs: number;
 }
 
-/** 1. IDM-VTON via fal.ai */
+/** 1. IDM-VTON via Colab Gradio server */
 async function runIdmVton(
   personUrl: string,
   garmentUrl: string,
@@ -86,56 +86,41 @@ async function runIdmVton(
   description: string,
 ): Promise<ModelResult> {
   const start = Date.now();
-  const FAL_KEY = Deno.env.get("FAL_KEY");
-  if (!FAL_KEY) return { model: "IDM-VTON", imageBase64: null, error: "FAL_KEY not configured", durationMs: 0 };
+  const COLAB_URL = Deno.env.get("IDM_VTON_COLAB_URL");
+  if (!COLAB_URL) return { model: "IDM-VTON", imageBase64: null, error: "IDM_VTON_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
 
   try {
-    // Map category to IDM-VTON format
-    const catMap: Record<string, string> = {
-      upper_body: "upper_body",
-      lower_body: "lower_body",
-      dresses: "dresses",
-      topwear: "upper_body",
-      bottomwear: "lower_body",
-      footwear: "upper_body", // fallback
-    };
+    // Call Gradio API on Colab — /api/tryon endpoint
+    const apiUrl = `${COLAB_URL.replace(/\/$/, "")}/api/tryon`;
+    console.log(`[IDM-VTON] Calling Colab: ${apiUrl}`);
 
-    const res = await fetch("https://fal.run/fal-ai/idm-vton", {
+    const res = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Key ${FAL_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        human_image_url: personUrl,
-        garment_image_url: garmentUrl,
-        description: description || "clothing item",
-        num_inference_steps: 30,
-        seed: 42,
+        data: [personUrl, garmentUrl, description || "clothing item"],
       }),
     });
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`fal.ai IDM-VTON ${res.status}: ${err.substring(0, 200)}`);
+      throw new Error(`Colab IDM-VTON ${res.status}: ${err.substring(0, 300)}`);
     }
 
-    const data = await res.json();
-    const imageUrl = data?.image?.url;
-    if (!imageUrl) throw new Error("No image URL in IDM-VTON response");
+    const gradioResponse = await res.json();
+    // Gradio returns { data: ["json_string"] }
+    const resultJson = JSON.parse(gradioResponse.data?.[0] ?? "{}");
 
-    // Download the result image and convert to base64
-    const imgRes = await fetch(imageUrl);
-    const imgBuf = await imgRes.arrayBuffer();
-    const imgBase64 = btoa(String.fromCharCode(...new Uint8Array(imgBuf)));
+    if (!resultJson.success) throw new Error(resultJson.error || "IDM-VTON failed");
+    if (!resultJson.image_base64) throw new Error("No image in IDM-VTON response");
 
-    return { model: "IDM-VTON", imageBase64: imgBase64, durationMs: Date.now() - start };
+    return { model: "IDM-VTON", imageBase64: resultJson.image_base64, durationMs: Date.now() - start };
   } catch (e) {
     return { model: "IDM-VTON", imageBase64: null, error: String(e), durationMs: Date.now() - start };
   }
 }
 
-/** 2. OmniGen v1 via fal.ai — multi-image input */
+/** 2. OmniGen v1 via Colab Gradio server — multi-image input */
 async function runOmniGen(
   selfieUrl: string,
   fullBodyUrl: string,
@@ -143,51 +128,33 @@ async function runOmniGen(
   description: string,
 ): Promise<ModelResult> {
   const start = Date.now();
-  const FAL_KEY = Deno.env.get("FAL_KEY");
-  if (!FAL_KEY) return { model: "OmniGen", imageBase64: null, error: "FAL_KEY not configured", durationMs: 0 };
-  if (!selfieUrl) return { model: "OmniGen", imageBase64: null, error: "No selfie provided", durationMs: 0 };
+  const COLAB_URL = Deno.env.get("OMNIGEN_COLAB_URL");
+  if (!COLAB_URL) return { model: "OmniGen", imageBase64: null, error: "OMNIGEN_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
 
   try {
-    const prompt =
-      `Generate a photorealistic image of the person shown in <|image_1|> and <|image_2|> ` +
-      `wearing the clothing item shown in <|image_3|>. ` +
-      `The person should be in a natural full-body standing pose, ` +
-      `preserving their exact face, skin tone, hair, and body proportions. ` +
-      `The ${description || "clothing"} should fit naturally on their body. ` +
-      `Studio lighting, clean background, fashion photography style.`;
+    const apiUrl = `${COLAB_URL.replace(/\/$/, "")}/api/tryon`;
+    console.log(`[OmniGen] Calling Colab: ${apiUrl}`);
 
-    const res = await fetch("https://fal.run/fal-ai/omnigen-v1", {
+    const res = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Key ${FAL_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        prompt,
-        input_image_urls: [selfieUrl, fullBodyUrl, garmentUrl],
-        num_images: 1,
-        num_inference_steps: 50,
-        guidance_scale: 3.0,
-        img_guidance_scale: 1.6,
-        image_size: "portrait_4_3",
-        seed: 42,
+        data: [selfieUrl || "", fullBodyUrl, garmentUrl, description || "clothing item", 50],
       }),
     });
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`fal.ai OmniGen ${res.status}: ${err.substring(0, 200)}`);
+      throw new Error(`Colab OmniGen ${res.status}: ${err.substring(0, 300)}`);
     }
 
-    const data = await res.json();
-    const imageUrl = data?.images?.[0]?.url;
-    if (!imageUrl) throw new Error("No image URL in OmniGen response");
+    const gradioResponse = await res.json();
+    const resultJson = JSON.parse(gradioResponse.data?.[0] ?? "{}");
 
-    const imgRes = await fetch(imageUrl);
-    const imgBuf = await imgRes.arrayBuffer();
-    const imgBase64 = btoa(String.fromCharCode(...new Uint8Array(imgBuf)));
+    if (!resultJson.success) throw new Error(resultJson.error || "OmniGen failed");
+    if (!resultJson.image_base64) throw new Error("No image in OmniGen response");
 
-    return { model: "OmniGen", imageBase64: imgBase64, durationMs: Date.now() - start };
+    return { model: "OmniGen", imageBase64: resultJson.image_base64, durationMs: Date.now() - start };
   } catch (e) {
     return { model: "OmniGen", imageBase64: null, error: String(e), durationMs: Date.now() - start };
   }
@@ -467,12 +434,14 @@ serve(async (req) => {
     const personRawB64 = stripDataUrlPrefix(fullBodyImage);
     const garmentRawB64 = stripDataUrlPrefix(garmentDataUrl);
 
-    // Determine which models to run
-    const hasFalKey = !!Deno.env.get("FAL_KEY");
+    // Determine which models to run based on available Colab URLs / API keys
+    const hasIdmVton = !!Deno.env.get("IDM_VTON_COLAB_URL");
+    const hasOmniGen = !!Deno.env.get("OMNIGEN_COLAB_URL");
     const hasGcpKey = !!Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
 
     const enabledModels = requestedModels ?? [
-      ...(hasFalKey ? ["idm-vton", "omnigen"] : []),
+      ...(hasIdmVton ? ["idm-vton"] : []),
+      ...(hasOmniGen ? ["omnigen"] : []),
       ...(hasGcpKey ? ["vertex-ai"] : []),
     ];
 
@@ -502,7 +471,7 @@ serve(async (req) => {
 
     if (modelPromises.length === 0) {
       return new Response(
-        JSON.stringify({ error: "No models available. Set FAL_KEY or GCP credentials." }),
+        JSON.stringify({ error: "No models available. Set IDM_VTON_COLAB_URL, OMNIGEN_COLAB_URL, or GCP credentials." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
