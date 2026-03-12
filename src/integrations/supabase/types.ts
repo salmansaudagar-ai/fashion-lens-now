@@ -101,11 +101,13 @@ export type Database = {
           email: string | null
           full_body_url: string | null
           full_name: string
+          garment_url: string | null
           gender: string
           generated_look_url: string | null
           generated_video_url: string | null
           generation_count: number
           id: string
+          model_comparison_data: Json | null
           phone: string | null
           registration_status: string
           selected_bottomwear: Json | null

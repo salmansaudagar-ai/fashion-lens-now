@@ -528,20 +528,38 @@ serve(async (req) => {
     const winnerImageUrl = winnerUpload?.imageUrl;
     if (!winnerImageUrl) throw new Error("Failed to create winner image URL");
 
-    // Increment generation count
+    // Build model comparison data for the /compare page
+    const modelComparisonData = {
+      modelResults: modelResults.map((r) => {
+        const upload = modelImageUploads.find((u) => u.model === r.model);
+        return {
+          model: r.model,
+          success: !!r.imageBase64,
+          error: r.error || null,
+          durationMs: r.durationMs,
+          imageUrl: upload?.imageUrl ?? null,
+        };
+      }),
+      winner: judgeResult.winner,
+      reasoning: judgeResult.reasoning,
+      scores: judgeResult.scores,
+      generatedAt: new Date().toISOString(),
+    };
+
+    // Atomically update session: generation count, generated_look_url, garment_url,
+    // model_comparison_data, and registration_status — all in one DB write.
+    // This fixes the race condition where /display saw status='registered' before
+    // generated_look_url was set.
     await supabase
       .from("vto_sessions")
-      .update({ generation_count: session.generation_count + 1 })
+      .update({
+        generation_count: session.generation_count + 1,
+        generated_look_url: winnerImageUrl,
+        garment_url: garmentUrl,
+        model_comparison_data: modelComparisonData,
+        registration_status: "registered",
+      })
       .eq("id", session.id);
-
-    // Update session status back
-    try {
-      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/update-session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionToken, updates: { registration_status: "registered" } }),
-      });
-    } catch (_) { /* non-critical */ }
 
     console.log(`[VTO] Done! Winner: ${judgeResult.winner}, count: ${session.generation_count + 1}`);
 
