@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trophy, Clock, AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { Trophy, Clock, AlertCircle, CheckCircle2, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -99,6 +99,11 @@ const ModelComparison: React.FC = () => {
     };
   }, []);
 
+  const handleReset = () => {
+    setSession(null);
+    setLastUpdated('');
+  };
+
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
@@ -125,6 +130,13 @@ const ModelComparison: React.FC = () => {
               <span className="text-sm font-semibold text-amber-300">Winner: {winner}</span>
             </div>
           )}
+          <button
+            onClick={handleReset}
+            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-full transition text-sm text-gray-300 hover:text-white"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reset
+          </button>
           <div className="flex items-center gap-1 text-xs text-gray-500">
             <RefreshCw className={`w-3 h-3 ${isPolling ? 'animate-spin' : ''}`} />
             <span>Live</span>
