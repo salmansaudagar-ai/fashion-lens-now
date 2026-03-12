@@ -219,11 +219,19 @@ export const OutfitSelectionStep: React.FC = () => {
         setGeneratedLook(data.imageUrl);
 
         // Store multi-model comparison info for the result screen & comparison page
+        // Use localStorage so /compare page works even in a different tab
         if (data.winner) {
-          sessionStorage.setItem('vto_model_winner', data.winner);
-          sessionStorage.setItem('vto_model_reasoning', data.reasoning || '');
-          sessionStorage.setItem('vto_model_results', JSON.stringify(data.modelResults || []));
-          sessionStorage.setItem('vto_model_scores', JSON.stringify(data.scores || {}));
+          localStorage.setItem('vto_model_winner', data.winner);
+          localStorage.setItem('vto_model_reasoning', data.reasoning || '');
+          localStorage.setItem('vto_model_results', JSON.stringify(data.modelResults || []));
+          localStorage.setItem('vto_model_scores', JSON.stringify(data.scores || {}));
+          // Also store input images in localStorage for compare page
+          const selfieForCompare = capturedImages.selfie || sessionStorage.getItem('vto_selfie_preview') || '';
+          if (selfieForCompare) localStorage.setItem('vto_compare_selfie', selfieForCompare);
+          if (fullBodyImage) localStorage.setItem('vto_compare_fullbody', fullBodyImage.substring(0, 200) === fullBodyImage ? fullBodyImage : '(base64-too-large)');
+          const garmentFull = item.imageUrl.startsWith('/') ? `${window.location.origin}${item.imageUrl}` : item.imageUrl;
+          localStorage.setItem('vto_compare_garment', garmentFull);
+          localStorage.setItem('vto_compare_generated', data.imageUrl);
         }
 
         if (activeSessionId && activeToken) {
@@ -421,7 +429,7 @@ export const OutfitSelectionStep: React.FC = () => {
       {/* ── Product Grid ─────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto px-4 md:px-8 pb-8">
         {isLoading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-5">
             {Array.from({ length: 8 }).map((_, i) => (
               <div key={i} className="rounded-2xl bg-muted aspect-[3/4] animate-pulse" />
             ))}
@@ -433,7 +441,7 @@ export const OutfitSelectionStep: React.FC = () => {
             <p className="text-sm mt-1">Try a different search or category</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-5">
             {filteredItems.map(item => (
               <OutfitCard
                 key={item.id}

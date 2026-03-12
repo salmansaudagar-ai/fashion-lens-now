@@ -22,15 +22,16 @@ const ModelComparison: React.FC = () => {
   const [winnerImageUrl, setWinnerImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load all data from sessionStorage
-    const results = sessionStorage.getItem('vto_model_results');
-    const w = sessionStorage.getItem('vto_model_winner');
-    const r = sessionStorage.getItem('vto_model_reasoning');
-    const s = sessionStorage.getItem('vto_model_scores');
-    const selfie = sessionStorage.getItem('vto_selfie_preview');
-    const fullBody = sessionStorage.getItem('vto_full_body');
-    const garment = sessionStorage.getItem('vto_garment_image');
-    const generatedLook = sessionStorage.getItem('vto_layered_base');
+    // Load comparison data from localStorage (persists across tabs)
+    // with sessionStorage fallback for backward compat
+    const results = localStorage.getItem('vto_model_results') || sessionStorage.getItem('vto_model_results');
+    const w = localStorage.getItem('vto_model_winner') || sessionStorage.getItem('vto_model_winner');
+    const r = localStorage.getItem('vto_model_reasoning') || sessionStorage.getItem('vto_model_reasoning');
+    const s = localStorage.getItem('vto_model_scores') || sessionStorage.getItem('vto_model_scores');
+    const selfie = localStorage.getItem('vto_compare_selfie') || sessionStorage.getItem('vto_selfie_preview');
+    const fullBody = localStorage.getItem('vto_compare_fullbody') || sessionStorage.getItem('vto_full_body');
+    const garment = localStorage.getItem('vto_compare_garment') || sessionStorage.getItem('vto_garment_image');
+    const generatedLook = localStorage.getItem('vto_compare_generated') || sessionStorage.getItem('vto_layered_base');
 
     if (results) {
       try { setModelResults(JSON.parse(results)); } catch {}
@@ -91,11 +92,11 @@ const ModelComparison: React.FC = () => {
         )}
       </div>
 
-      <div className="p-6 space-y-8">
+      <div className="p-6 lg:p-10 space-y-8 max-w-screen-2xl mx-auto">
         {/* Input Images Row */}
         <section>
           <h2 className="text-lg font-semibold text-gray-300 mb-4">Input Images</h2>
-          <div className="grid grid-cols-3 gap-4 max-w-3xl">
+          <div className="grid grid-cols-3 gap-4 max-w-4xl">
             <div className="space-y-2">
               <span className="text-xs text-gray-500 uppercase tracking-wider">Selfie</span>
               <div className="aspect-[3/4] rounded-xl overflow-hidden bg-gray-800 border border-white/10">

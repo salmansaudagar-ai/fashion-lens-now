@@ -44,11 +44,11 @@ export const VirtualLookStep: React.FC = () => {
   const [measurements, setMeasurements] = useState<BodyMeasurements | null>(null);
   const [measuringInProgress, setMeasuringInProgress] = useState(false);
 
-  // Load model comparison info from sessionStorage
+  // Load model comparison info from localStorage (with sessionStorage fallback)
   useEffect(() => {
-    const winner = sessionStorage.getItem('vto_model_winner');
-    const reasoning = sessionStorage.getItem('vto_model_reasoning');
-    const results = sessionStorage.getItem('vto_model_results');
+    const winner = localStorage.getItem('vto_model_winner') || sessionStorage.getItem('vto_model_winner');
+    const reasoning = localStorage.getItem('vto_model_reasoning') || sessionStorage.getItem('vto_model_reasoning');
+    const results = localStorage.getItem('vto_model_results') || sessionStorage.getItem('vto_model_results');
     if (winner) setModelWinner(winner);
     if (reasoning) setModelReasoning(reasoning);
     if (results) {
@@ -509,8 +509,8 @@ export const VirtualLookStep: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8 animate-fade-in">
-      <div className="w-full max-w-5xl">
+    <div className="flex-1 flex items-center justify-center p-4 md:p-8 animate-fade-in">
+      <div className="w-full max-w-7xl">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-full mb-4">
@@ -592,6 +592,12 @@ export const VirtualLookStep: React.FC = () => {
                     ))}
                   </div>
                 )}
+                <button
+                  onClick={() => window.open('/compare', '_blank')}
+                  className="mt-3 w-full text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg py-1.5 transition-colors font-medium"
+                >
+                  View Full Comparison →
+                </button>
               </div>
             )}
 
