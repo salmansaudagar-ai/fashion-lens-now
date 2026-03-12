@@ -27,10 +27,10 @@ const ModelComparison: React.FC = () => {
     const w = sessionStorage.getItem('vto_model_winner');
     const r = sessionStorage.getItem('vto_model_reasoning');
     const s = sessionStorage.getItem('vto_model_scores');
-    const selfie = sessionStorage.getItem('vto_selfie');
+    const selfie = sessionStorage.getItem('vto_selfie_preview');
     const fullBody = sessionStorage.getItem('vto_full_body');
     const garment = sessionStorage.getItem('vto_garment_image');
-    const generatedLook = sessionStorage.getItem('vto_generated_look');
+    const generatedLook = sessionStorage.getItem('vto_layered_base');
 
     if (results) {
       try { setModelResults(JSON.parse(results)); } catch {}

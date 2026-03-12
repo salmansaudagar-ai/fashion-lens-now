@@ -149,6 +149,11 @@ export const OutfitSelectionStep: React.FC = () => {
 
     try {
       const outfitImageBase64 = await imageUrlToBase64(item.imageUrl);
+
+      // Store images in sessionStorage for the /compare page
+      sessionStorage.setItem('vto_garment_image', item.imageUrl.startsWith('/') ? `${window.location.origin}${item.imageUrl}` : item.imageUrl);
+      if (fullBodyImage) sessionStorage.setItem('vto_full_body', fullBodyImage);
+
       console.log('[VTO] Calling multi-model generate-virtual-tryon...');
 
       // Also send selfie for multi-image models (OmniGen)
