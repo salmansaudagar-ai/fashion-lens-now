@@ -5,17 +5,17 @@
  * to pick the best result.
  *
  * Models:
- *   1. IDM-VTON  (fal.ai)  — single person + garment, best garment detail
- *   2. OmniGen v1 (fal.ai) — multi-image: selfie + full body + garment
- *   3. Vertex AI (Google)   — single person + garment, fast
+ *   1. CatVTON-FLUX (Colab) — SOTA FID 5.59, FLUX.1-Fill + LoRA, finetuneable
+ *   2. IDM-VTON  (Colab)    — single person + garment, dual-UNet architecture
+ *   3. Vertex AI (Google)    — single person + garment, fast cloud API
  *
  * Input body:
  *   fullBodyImage    — base64 data URL of full-body photo (required)
- *   selfieImage      — base64 data URL of selfie (optional, used by OmniGen)
+ *   selfieImage      — base64 data URL of selfie (optional)
  *   outfitImageUrls  — array with one base64 data URL of the garment
  *   category         — "upper_body" | "lower_body" | "dresses"
  *   garmentDescription — text description of garment (optional)
- *   models           — which models to run: ["idm-vton","omnigen","vertex-ai"]
+ *   models           — which models to run: ["catvton-flux","idm-vton","vertex-ai"]
  *                       defaults to all available
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -136,35 +136,35 @@ async function runIdmVton(
   }
 }
 
-/** 2. OmniGen v1 via Colab Gradio server — multi-image input */
-async function runOmniGen(
-  selfieUrl: string,
-  fullBodyUrl: string,
+/** 2. CatVTON-FLUX via Colab Gradio server — SOTA virtual try-on */
+async function runCatVtonFlux(
+  personUrl: string,
   garmentUrl: string,
+  category: string,
   description: string,
 ): Promise<ModelResult> {
   const start = Date.now();
-  const COLAB_URL = Deno.env.get("OMNIGEN_COLAB_URL");
-  if (!COLAB_URL) return { model: "OmniGen", imageBase64: null, error: "OMNIGEN_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
+  const COLAB_URL = Deno.env.get("CATVTON_COLAB_URL");
+  if (!COLAB_URL) return { model: "CatVTON-FLUX", imageBase64: null, error: "CATVTON_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
 
   try {
     // Gradio v4+ uses two-step API: POST /gradio_api/call/<api_name> then GET the event stream
     const baseUrl = COLAB_URL.replace(/\/$/, "");
     const callUrl = `${baseUrl}/gradio_api/call/tryon`;
-    console.log(`[OmniGen] Calling Colab (Gradio v4): ${callUrl}`);
+    console.log(`[CatVTON-FLUX] Calling Colab (Gradio v4): ${callUrl}`);
 
-    // Step 1: Submit the job
+    // Step 1: Submit the job — same API as IDM-VTON: person_url, garment_url, cloth_type
     const submitRes = await fetch(callUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        data: [selfieUrl || "", fullBodyUrl, garmentUrl, description || "clothing item", 50],
+        data: [personUrl, garmentUrl, category || "upper_body"],
       }),
     });
 
     if (!submitRes.ok) {
       const err = await submitRes.text();
-      throw new Error(`Colab OmniGen submit ${submitRes.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Colab CatVTON-FLUX submit ${submitRes.status}: ${err.substring(0, 300)}`);
     }
 
     const { event_id } = await submitRes.json();
@@ -174,23 +174,23 @@ async function runOmniGen(
     const resultRes = await fetch(`${callUrl}/${event_id}`);
     if (!resultRes.ok) {
       const err = await resultRes.text();
-      throw new Error(`Colab OmniGen result ${resultRes.status}: ${err.substring(0, 300)}`);
+      throw new Error(`Colab CatVTON-FLUX result ${resultRes.status}: ${err.substring(0, 300)}`);
     }
 
     // Parse SSE response — look for "event: complete" data line
     const sseText = await resultRes.text();
     const dataMatch = sseText.match(/event:\s*complete\ndata:\s*(.+)/);
-    if (!dataMatch) throw new Error(`OmniGen: no complete event in SSE response: ${sseText.substring(0, 300)}`);
+    if (!dataMatch) throw new Error(`CatVTON-FLUX: no complete event in SSE response: ${sseText.substring(0, 300)}`);
 
     const gradioResponse = JSON.parse(dataMatch[1]);
     const resultJson = JSON.parse(gradioResponse[0] ?? "{}");
 
-    if (!resultJson.success) throw new Error(resultJson.error || "OmniGen failed");
-    if (!resultJson.image_base64) throw new Error("No image in OmniGen response");
+    if (!resultJson.success) throw new Error(resultJson.error || "CatVTON-FLUX failed");
+    if (!resultJson.image_base64) throw new Error("No image in CatVTON-FLUX response");
 
-    return { model: "OmniGen", imageBase64: resultJson.image_base64, durationMs: Date.now() - start };
+    return { model: "CatVTON-FLUX", imageBase64: resultJson.image_base64, durationMs: Date.now() - start };
   } catch (e) {
-    return { model: "OmniGen", imageBase64: null, error: String(e), durationMs: Date.now() - start };
+    return { model: "CatVTON-FLUX", imageBase64: null, error: String(e), durationMs: Date.now() - start };
   }
 }
 
@@ -469,13 +469,13 @@ serve(async (req) => {
     const garmentRawB64 = stripDataUrlPrefix(garmentDataUrl);
 
     // Determine which models to run based on available Colab URLs / API keys
+    const hasCatVtonFlux = !!Deno.env.get("CATVTON_COLAB_URL");
     const hasIdmVton = !!Deno.env.get("IDM_VTON_COLAB_URL");
-    const hasOmniGen = !!Deno.env.get("OMNIGEN_COLAB_URL");
     const hasGcpKey = !!Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
 
     const enabledModels = requestedModels ?? [
+      ...(hasCatVtonFlux ? ["catvton-flux"] : []),
       ...(hasIdmVton ? ["idm-vton"] : []),
-      ...(hasOmniGen ? ["omnigen"] : []),
       ...(hasGcpKey ? ["vertex-ai"] : []),
     ];
 
@@ -493,11 +493,11 @@ serve(async (req) => {
     // Run all models in parallel
     const modelPromises: Promise<ModelResult>[] = [];
 
+    if (enabledModels.includes("catvton-flux")) {
+      modelPromises.push(runCatVtonFlux(fullBodyUrl, garmentUrl, category, garmentDescription));
+    }
     if (enabledModels.includes("idm-vton")) {
       modelPromises.push(runIdmVton(fullBodyUrl, garmentUrl, category, garmentDescription));
-    }
-    if (enabledModels.includes("omnigen")) {
-      modelPromises.push(runOmniGen(selfieUrl, fullBodyUrl, garmentUrl, garmentDescription));
     }
     if (enabledModels.includes("vertex-ai")) {
       modelPromises.push(runVertexAI(personRawB64, garmentRawB64));
@@ -505,7 +505,7 @@ serve(async (req) => {
 
     if (modelPromises.length === 0) {
       return new Response(
-        JSON.stringify({ error: "No models available. Set IDM_VTON_COLAB_URL, OMNIGEN_COLAB_URL, or GCP credentials." }),
+        JSON.stringify({ error: "No models available. Set CATVTON_COLAB_URL, IDM_VTON_COLAB_URL, or GCP credentials." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
