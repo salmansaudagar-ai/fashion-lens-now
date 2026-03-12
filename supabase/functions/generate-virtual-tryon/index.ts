@@ -90,11 +90,13 @@ async function runIdmVton(
   if (!COLAB_URL) return { model: "IDM-VTON", imageBase64: null, error: "IDM_VTON_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
 
   try {
-    // Call Gradio API on Colab — /api/tryon endpoint
-    const apiUrl = `${COLAB_URL.replace(/\/$/, "")}/api/tryon`;
-    console.log(`[IDM-VTON] Calling Colab: ${apiUrl}`);
+    // Gradio v4+ uses two-step API: POST /gradio_api/call/<api_name> then GET the event stream
+    const baseUrl = COLAB_URL.replace(/\/$/, "");
+    const callUrl = `${baseUrl}/gradio_api/call/tryon`;
+    console.log(`[IDM-VTON] Calling Colab (Gradio v4): ${callUrl}`);
 
-    const res = await fetch(apiUrl, {
+    // Step 1: Submit the job
+    const submitRes = await fetch(callUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -102,14 +104,28 @@ async function runIdmVton(
       }),
     });
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Colab IDM-VTON ${res.status}: ${err.substring(0, 300)}`);
+    if (!submitRes.ok) {
+      const err = await submitRes.text();
+      throw new Error(`Colab IDM-VTON submit ${submitRes.status}: ${err.substring(0, 300)}`);
     }
 
-    const gradioResponse = await res.json();
-    // Gradio returns { data: ["json_string"] }
-    const resultJson = JSON.parse(gradioResponse.data?.[0] ?? "{}");
+    const { event_id } = await submitRes.json();
+    if (!event_id) throw new Error("No event_id returned from Gradio submit");
+
+    // Step 2: Get result via SSE stream
+    const resultRes = await fetch(`${callUrl}/${event_id}`);
+    if (!resultRes.ok) {
+      const err = await resultRes.text();
+      throw new Error(`Colab IDM-VTON result ${resultRes.status}: ${err.substring(0, 300)}`);
+    }
+
+    // Parse SSE response — look for "event: complete" data line
+    const sseText = await resultRes.text();
+    const dataMatch = sseText.match(/event:\s*complete\ndata:\s*(.+)/);
+    if (!dataMatch) throw new Error(`IDM-VTON: no complete event in SSE response: ${sseText.substring(0, 300)}`);
+
+    const gradioResponse = JSON.parse(dataMatch[1]);
+    const resultJson = JSON.parse(gradioResponse[0] ?? "{}");
 
     if (!resultJson.success) throw new Error(resultJson.error || "IDM-VTON failed");
     if (!resultJson.image_base64) throw new Error("No image in IDM-VTON response");
@@ -132,10 +148,13 @@ async function runOmniGen(
   if (!COLAB_URL) return { model: "OmniGen", imageBase64: null, error: "OMNIGEN_COLAB_URL not set (run Colab notebook first)", durationMs: 0 };
 
   try {
-    const apiUrl = `${COLAB_URL.replace(/\/$/, "")}/api/tryon`;
-    console.log(`[OmniGen] Calling Colab: ${apiUrl}`);
+    // Gradio v4+ uses two-step API: POST /gradio_api/call/<api_name> then GET the event stream
+    const baseUrl = COLAB_URL.replace(/\/$/, "");
+    const callUrl = `${baseUrl}/gradio_api/call/tryon`;
+    console.log(`[OmniGen] Calling Colab (Gradio v4): ${callUrl}`);
 
-    const res = await fetch(apiUrl, {
+    // Step 1: Submit the job
+    const submitRes = await fetch(callUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -143,13 +162,28 @@ async function runOmniGen(
       }),
     });
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Colab OmniGen ${res.status}: ${err.substring(0, 300)}`);
+    if (!submitRes.ok) {
+      const err = await submitRes.text();
+      throw new Error(`Colab OmniGen submit ${submitRes.status}: ${err.substring(0, 300)}`);
     }
 
-    const gradioResponse = await res.json();
-    const resultJson = JSON.parse(gradioResponse.data?.[0] ?? "{}");
+    const { event_id } = await submitRes.json();
+    if (!event_id) throw new Error("No event_id returned from Gradio submit");
+
+    // Step 2: Get result via SSE stream
+    const resultRes = await fetch(`${callUrl}/${event_id}`);
+    if (!resultRes.ok) {
+      const err = await resultRes.text();
+      throw new Error(`Colab OmniGen result ${resultRes.status}: ${err.substring(0, 300)}`);
+    }
+
+    // Parse SSE response — look for "event: complete" data line
+    const sseText = await resultRes.text();
+    const dataMatch = sseText.match(/event:\s*complete\ndata:\s*(.+)/);
+    if (!dataMatch) throw new Error(`OmniGen: no complete event in SSE response: ${sseText.substring(0, 300)}`);
+
+    const gradioResponse = JSON.parse(dataMatch[1]);
+    const resultJson = JSON.parse(gradioResponse[0] ?? "{}");
 
     if (!resultJson.success) throw new Error(resultJson.error || "OmniGen failed");
     if (!resultJson.image_base64) throw new Error("No image in OmniGen response");
