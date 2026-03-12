@@ -502,21 +502,31 @@ serve(async (req) => {
     const winnerResult =
       successfulResults.find((r) => r.model === judgeResult.winner) ?? successfulResults[0];
 
-    // Upload winner to permanent storage
-    const winnerBytes = Uint8Array.from(atob(winnerResult.imageBase64!), (c) => c.charCodeAt(0));
-    const winnerPath = `generated-looks/generated-${session.id}-${Date.now()}.jpg`;
+    // Upload ALL successful model images to storage (for comparison page)
+    const ts = Date.now();
+    const modelImageUploads = await Promise.all(
+      successfulResults.map(async (r) => {
+        const slug = r.model.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        const bytes = Uint8Array.from(atob(r.imageBase64!), (c) => c.charCodeAt(0));
+        const path = `generated-looks/${slug}-${session.id}-${ts}.jpg`;
 
-    const { error: uploadError } = await supabase.storage
-      .from("vto-images")
-      .upload(winnerPath, winnerBytes, { contentType: "image/jpeg", upsert: true });
+        await supabase.storage.from("vto-images").upload(path, bytes, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
 
-    if (uploadError) throw new Error("Failed to save generated image");
+        const { data } = await supabase.storage
+          .from("vto-images")
+          .createSignedUrl(path, 86400);
 
-    const { data: signedData } = await supabase.storage
-      .from("vto-images")
-      .createSignedUrl(winnerPath, 86400);
+        return { model: r.model, imageUrl: data?.signedUrl ?? null };
+      }),
+    );
 
-    if (!signedData?.signedUrl) throw new Error("Failed to create image URL");
+    // Winner URL
+    const winnerUpload = modelImageUploads.find((u) => u.model === winnerResult.model);
+    const winnerImageUrl = winnerUpload?.imageUrl;
+    if (!winnerImageUrl) throw new Error("Failed to create winner image URL");
 
     // Increment generation count
     await supabase
@@ -538,16 +548,20 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        imageUrl: signedData.signedUrl,
+        imageUrl: winnerImageUrl,
         winner: judgeResult.winner,
         reasoning: judgeResult.reasoning,
         scores: judgeResult.scores,
-        modelResults: modelResults.map((r) => ({
-          model: r.model,
-          success: !!r.imageBase64,
-          error: r.error,
-          durationMs: r.durationMs,
-        })),
+        modelResults: modelResults.map((r) => {
+          const upload = modelImageUploads.find((u) => u.model === r.model);
+          return {
+            model: r.model,
+            success: !!r.imageBase64,
+            error: r.error,
+            durationMs: r.durationMs,
+            imageUrl: upload?.imageUrl ?? null,
+          };
+        }),
         generationsRemaining: MAX_GENERATIONS_PER_SESSION - session.generation_count - 1,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

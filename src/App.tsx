@@ -11,6 +11,7 @@ import ProductDetail from "./pages/ProductDetail";
 import Register from "./pages/Register";
 import OrderTracking from "./pages/OrderTracking";
 import NotFound from "./pages/NotFound";
+import ModelComparison from "./pages/ModelComparison";
 
 const queryClient = new QueryClient();
 
@@ -28,6 +29,7 @@ const App = () => (
             <Route path="/admin" element={<Admin />} />
             <Route path="/register" element={<Register />} />
             <Route path="/order-tracking" element={<OrderTracking />} />
+            <Route path="/compare" element={<ModelComparison />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

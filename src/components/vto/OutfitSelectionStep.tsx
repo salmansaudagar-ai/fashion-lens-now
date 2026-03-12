@@ -213,11 +213,12 @@ export const OutfitSelectionStep: React.FC = () => {
         setExcludedCategory(null);
         setGeneratedLook(data.imageUrl);
 
-        // Store multi-model comparison info for the result screen
+        // Store multi-model comparison info for the result screen & comparison page
         if (data.winner) {
           sessionStorage.setItem('vto_model_winner', data.winner);
           sessionStorage.setItem('vto_model_reasoning', data.reasoning || '');
           sessionStorage.setItem('vto_model_results', JSON.stringify(data.modelResults || []));
+          sessionStorage.setItem('vto_model_scores', JSON.stringify(data.scores || {}));
         }
 
         if (activeSessionId && activeToken) {
