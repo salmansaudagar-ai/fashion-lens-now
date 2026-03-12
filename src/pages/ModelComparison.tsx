@@ -40,6 +40,7 @@ const ModelComparison: React.FC = () => {
   const [isPolling, setIsPolling] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const dismissedIds = useRef<Set<string>>(new Set());
 
   // Derived state from session
   const comparisonData = session?.model_comparison_data ?? null;
@@ -81,7 +82,7 @@ const ModelComparison: React.FC = () => {
 
         if (res.ok) {
           const data: SessionRow[] = await res.json();
-          if (data?.[0]) {
+          if (data?.[0] && !dismissedIds.current.has(data[0].id)) {
             setSession(data[0]);
             setLastUpdated(new Date().toLocaleTimeString());
           }
@@ -100,6 +101,7 @@ const ModelComparison: React.FC = () => {
   }, []);
 
   const handleReset = () => {
+    if (session?.id) dismissedIds.current.add(session.id);
     setSession(null);
     setLastUpdated('');
   };
