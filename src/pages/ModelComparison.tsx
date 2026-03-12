@@ -101,9 +101,38 @@ const ModelComparison: React.FC = () => {
   }, []);
 
   const handleReset = () => {
+    // Stop polling first to prevent immediate re-fetch
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    // Dismiss current session
     if (session?.id) dismissedIds.current.add(session.id);
     setSession(null);
     setLastUpdated('');
+    // Resume polling after a short delay
+    setTimeout(() => {
+      const headers = {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      };
+      const refetch = async () => {
+        try {
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()}&order=updated_at.desc&limit=1&select=id,session_token,registration_status,selfie_url,full_body_url,garment_url,generated_look_url,model_comparison_data,updated_at`,
+            { headers }
+          );
+          if (res.ok) {
+            const data: SessionRow[] = await res.json();
+            if (data?.[0] && !dismissedIds.current.has(data[0].id)) {
+              setSession(data[0]);
+              setLastUpdated(new Date().toLocaleTimeString());
+            }
+          }
+        } catch {}
+      };
+      pollRef.current = setInterval(refetch, 3000);
+    }, 500);
   };
 
   return (
