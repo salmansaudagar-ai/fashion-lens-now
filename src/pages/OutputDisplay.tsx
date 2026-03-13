@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, X } from 'lucide-react';
 import trendsLogo from '@/assets/trends-logo.png';
 import { DisplayCaptureFlow } from '@/components/vto/DisplayCaptureFlow';
+import { ConnectionGuard } from '@/components/ConnectionGuard';
 import { WardrobeWallScreen } from '@/components/display/WardrobeWallScreen';
 import { EditorialScreen } from '@/components/display/EditorialScreen';
 import { NeonTypewriterScreen } from '@/components/display/NeonTypewriterScreen';
@@ -150,13 +151,26 @@ export const OutputDisplay: React.FC = () => {
         if (displayState === 'idle' || displayState === 'capture_done') {
           const cutoff10m = new Date(Date.now() - 10 * 60 * 1000).toISOString();
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${cutoff10m}&order=updated_at.desc&limit=5&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url`,
+            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${cutoff10m}&order=updated_at.desc&limit=5&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url,updated_at`,
             { headers }
           );
           if (res.ok) {
-            const rows: SessionOutput[] = await res.json();
+            const rows: (SessionOutput & { updated_at?: string })[] = await res.json();
             for (const row of rows) {
               if (dismissedSessionIds.current.has(row.id)) continue;
+
+              // Auto-reset sessions stuck in "generating" for >5 minutes
+              if (row.registration_status === 'generating' && !row.generated_look_url && row.updated_at) {
+                const stuckMs = Date.now() - new Date(row.updated_at).getTime();
+                if (stuckMs > 5 * 60 * 1000) {
+                  fetch(`${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${row.id}`, {
+                    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+                    body: JSON.stringify({ registration_status: 'registered' }),
+                  }).catch(() => {});
+                  console.warn(`Auto-reset stuck session ${row.id.substring(0, 8)} (stuck ${Math.round(stuckMs / 60000)}m)`);
+                  continue;
+                }
+              }
 
               // Capture-pending: has selfie but no full body
               if (displayState === 'idle' && row.selfie_url && !row.full_body_url && !captureHandledIds.current.has(row.id)) {
@@ -430,4 +444,10 @@ function MeasRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default OutputDisplay;
+const OutputDisplayWithGuard: React.FC = () => (
+  <ConnectionGuard>
+    <OutputDisplay />
+  </ConnectionGuard>
+);
+
+export default OutputDisplayWithGuard;
