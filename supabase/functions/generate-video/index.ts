@@ -109,24 +109,15 @@ serve(async (req) => {
     const imgRes = await fetch(session.generated_look_url);
     if (!imgRes.ok) throw new Error(`Failed to download VTO image: ${imgRes.status}`);
     const imgBuffer = await imgRes.arrayBuffer();
-    // Chunked base64 encoding to avoid stack overflow
+    // Efficient single-pass base64 encoding (no intermediate chunks)
     const imgBytes = new Uint8Array(imgBuffer);
-    let imgBase64 = "";
+    let binaryStr = "";
     const CHUNK = 32768;
     for (let i = 0; i < imgBytes.length; i += CHUNK) {
-      const chunk = imgBytes.subarray(i, Math.min(i + CHUNK, imgBytes.length));
-      imgBase64 += btoa(String.fromCharCode(...chunk));
+      const end = Math.min(i + CHUNK, imgBytes.length);
+      for (let j = i; j < end; j++) binaryStr += String.fromCharCode(imgBytes[j]);
     }
-    // Fix: chunked btoa produces separate padded chunks; use proper approach
-    // Re-encode properly using binary string
-    let binaryStr = "";
-    for (let i = 0; i < imgBytes.length; i += CHUNK) {
-      const chunk = imgBytes.subarray(i, Math.min(i + CHUNK, imgBytes.length));
-      for (let j = 0; j < chunk.length; j++) {
-        binaryStr += String.fromCharCode(chunk[j]);
-      }
-    }
-    imgBase64 = btoa(binaryStr);
+    const imgBase64 = btoa(binaryStr);
     console.log(`[Video] Image downloaded: ${(imgBuffer.byteLength / 1024).toFixed(0)} KB, b64: ${imgBase64.length} chars`);
 
     // Get GCP access token
@@ -172,14 +163,15 @@ serve(async (req) => {
     if (!operationName) throw new Error("No operation name in Veo response");
     console.log(`[Video] Operation: ${operationName}`);
 
-    // Poll for completion
+    // Poll for completion with adaptive backoff (3s, 5s, 5s, 8s, 10s...)
     const pollUrl = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${VEO_MODEL}:fetchPredictOperation`;
-    const MAX_POLLS = 24; // 24 * 5s = 120s
-    const POLL_INTERVAL_MS = 5000;
+    const MAX_POLLS = 20;
+    const POLL_DELAYS = [3000, 5000, 5000, 5000, 8000, 8000, 10000]; // escalating delays
 
     let videoBase64: string | null = null;
     for (let i = 0; i < MAX_POLLS; i++) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      const delay = POLL_DELAYS[Math.min(i, POLL_DELAYS.length - 1)];
+      await new Promise((r) => setTimeout(r, delay));
 
       const pollRes = await fetch(pollUrl, {
         method: "POST",

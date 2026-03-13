@@ -146,19 +146,20 @@ const AutoConfirmOverlay: React.FC<{
   const [remaining, setRemaining] = useState(5);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const confirmedRef = useRef(false);
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) {
           if (intervalRef.current) clearInterval(intervalRef.current);
-          setTimeout(onConfirm, 0);
+          if (!confirmedRef.current) { confirmedRef.current = true; setTimeout(onConfirm, 0); }
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+    return () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [onConfirm]);
 
   return (
     <div className="fixed inset-0 bg-background flex flex-col animate-fade-in">

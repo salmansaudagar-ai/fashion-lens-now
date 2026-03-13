@@ -41,8 +41,13 @@ function mimeFromDataUrl(dataUrl: string): string {
   return m ? m[1] : "image/jpeg";
 }
 
-/** Get GCP access token via JWT-signed service account credentials */
+/** Cached GCP access token — survives across warm invocations (~50min TTL) */
+let _cachedToken: { token: string; expiresAt: number } | null = null;
+
+/** Get GCP access token via JWT-signed service account credentials (cached) */
 async function getGcpAccessToken(saJson: string): Promise<string> {
+  // Return cached token if still valid (with 5-min safety margin)
+  if (_cachedToken && Date.now() < _cachedToken.expiresAt) return _cachedToken.token;
   const sa = JSON.parse(saJson);
   const now = Math.floor(Date.now() / 1000);
   const encode = (obj: object) =>
@@ -80,6 +85,8 @@ async function getGcpAccessToken(saJson: string): Promise<string> {
   });
   if (!tokenRes.ok) throw new Error(`GCP token error: ${await tokenRes.text()}`);
   const { access_token } = await tokenRes.json();
+  // Cache for 50 minutes (tokens valid for 60min, 10min safety margin)
+  _cachedToken = { token: access_token, expiresAt: Date.now() + 50 * 60 * 1000 };
   return access_token;
 }
 
@@ -393,74 +400,51 @@ serve(async (req) => {
 
     const [result, measurements] = await Promise.all([vtoPromise, measurePromise]);
 
-    // Upload generated image to storage
+    // ── Upload result + garment images in PARALLEL ─────────────
+    const ts = Date.now();
     const bytes = Uint8Array.from(atob(result.imageBase64), (c) => c.charCodeAt(0));
-    const path = `generated-looks/gemini-vto-${session.id}-${Date.now()}.jpg`;
-
-    await supabase.storage.from("vto-images").upload(path, bytes, {
-      contentType: "image/jpeg",
-      upsert: true,
-    });
-
-    const { data: signedUrlData } = await supabase.storage
-      .from("vto-images")
-      .createSignedUrl(path, 86400);
-    const imageUrl = signedUrlData?.signedUrl;
-    if (!imageUrl) throw new Error("Failed to create image URL");
-
-    // Upload garment URL for display
+    const path = `generated-looks/gemini-vto-${session.id}-${ts}.jpg`;
     const garmentMime = mimeFromDataUrl(garmentDataUrl);
     const garmentExt = garmentMime === "image/png" ? "png" : "jpg";
-    const garmentPath = `tmp-inputs/garment-${session.id}-${Date.now()}.${garmentExt}`;
+    const garmentPath = `tmp-inputs/garment-${session.id}-${ts}.${garmentExt}`;
     const garmentBytes = Uint8Array.from(atob(stripDataUrlPrefix(garmentDataUrl)), (c) => c.charCodeAt(0));
-    await supabase.storage.from("vto-images").upload(garmentPath, garmentBytes, {
-      contentType: garmentMime,
-      upsert: true,
-    });
-    const { data: garmentSignedData } = await supabase.storage
-      .from("vto-images")
-      .createSignedUrl(garmentPath, 86400);
-    const garmentUrl = garmentSignedData?.signedUrl ?? "";
 
-    // ── Save training data for CatVTON-FLUX fine-tuning ──────
-    // Every successful Gemini generation becomes a training triplet:
-    //   (person, garment, [selfie]) → gemini_result
-    // Stored in vto-images/training-data/ with permanent paths (no signed URLs)
-    try {
-      const ts = Date.now();
-      const trainId = `${session.id}-${ts}`;
+    // Parallel: upload both images simultaneously
+    const [resultUpload, garmentUpload] = await Promise.all([
+      supabase.storage.from("vto-images").upload(path, bytes, { contentType: "image/jpeg", upsert: true }),
+      supabase.storage.from("vto-images").upload(garmentPath, garmentBytes, { contentType: garmentMime, upsert: true }),
+    ]);
 
-      // Upload person image for training
-      const personTrainPath = `training-data/${trainId}-person.jpg`;
-      const personTrainBytes = Uint8Array.from(atob(personRawB64), (c) => c.charCodeAt(0));
-      await supabase.storage.from("vto-images").upload(personTrainPath, personTrainBytes, {
-        contentType: "image/jpeg", upsert: true,
-      });
+    // Parallel: get signed URLs for both
+    const [resultSignedRes, garmentSignedRes] = await Promise.all([
+      supabase.storage.from("vto-images").createSignedUrl(path, 86400),
+      supabase.storage.from("vto-images").createSignedUrl(garmentPath, 86400),
+    ]);
+    const imageUrl = resultSignedRes.data?.signedUrl;
+    if (!imageUrl) throw new Error("Failed to create image URL");
+    const garmentUrl = garmentSignedRes.data?.signedUrl ?? "";
 
-      // Upload garment image for training
-      const garmentTrainPath = `training-data/${trainId}-garment.jpg`;
-      await supabase.storage.from("vto-images").upload(garmentTrainPath, garmentBytes, {
-        contentType: garmentMime, upsert: true,
-      });
+    // ── Save training data in PARALLEL (non-blocking) ────────
+    // Fire-and-forget: don't block the response
+    const trainId = `${session.id}-${ts}`;
+    const personTrainPath = `training-data/${trainId}-person.jpg`;
+    const garmentTrainPath = `training-data/${trainId}-garment.jpg`;
+    const resultTrainPath = `training-data/${trainId}-result.jpg`;
+    const selfieTrainPath = selfieRawB64 ? `training-data/${trainId}-selfie.jpg` : null;
 
-      // Upload result image for training (this is the Gemini output = ground truth)
-      const resultTrainPath = `training-data/${trainId}-result.jpg`;
-      await supabase.storage.from("vto-images").upload(resultTrainPath, bytes, {
-        contentType: "image/jpeg", upsert: true,
-      });
+    // Build all training upload promises
+    const trainUploads: Promise<any>[] = [
+      supabase.storage.from("vto-images").upload(personTrainPath, Uint8Array.from(atob(personRawB64), (c) => c.charCodeAt(0)), { contentType: "image/jpeg", upsert: true }),
+      supabase.storage.from("vto-images").upload(garmentTrainPath, garmentBytes, { contentType: garmentMime, upsert: true }),
+      supabase.storage.from("vto-images").upload(resultTrainPath, bytes, { contentType: "image/jpeg", upsert: true }),
+    ];
+    if (selfieRawB64 && selfieTrainPath) {
+      trainUploads.push(supabase.storage.from("vto-images").upload(selfieTrainPath, Uint8Array.from(atob(selfieRawB64), (c) => c.charCodeAt(0)), { contentType: "image/jpeg", upsert: true }));
+    }
 
-      // Upload selfie if present
-      let selfieTrainPath: string | null = null;
-      if (selfieRawB64) {
-        selfieTrainPath = `training-data/${trainId}-selfie.jpg`;
-        const selfieBytes = Uint8Array.from(atob(selfieRawB64), (c) => c.charCodeAt(0));
-        await supabase.storage.from("vto-images").upload(selfieTrainPath, selfieBytes, {
-          contentType: "image/jpeg", upsert: true,
-        });
-      }
-
-      // Record metadata in vto_training_data table
-      await supabase.from("vto_training_data").insert({
+    // Run all training uploads in parallel, then insert metadata
+    Promise.all(trainUploads)
+      .then(() => supabase.from("vto_training_data").insert({
         session_id: session.id,
         person_image_path: personTrainPath,
         garment_image_path: garmentTrainPath,
@@ -469,13 +453,9 @@ serve(async (req) => {
         category,
         garment_description: garmentDescription,
         gemini_duration_ms: result.durationMs,
-      });
-
-      console.log(`[VTO] Training data saved: ${trainId}`);
-    } catch (trainErr) {
-      // Non-critical — don't fail the request if training data save fails
-      console.error("[VTO] Training data save failed:", trainErr);
-    }
+      }))
+      .then(() => console.log(`[VTO] Training data saved: ${trainId}`))
+      .catch(e => console.error("[VTO] Training data save failed:", e));
 
     // Build model comparison data (single model, kept for backward compat with /compare page)
     const modelComparisonData = {

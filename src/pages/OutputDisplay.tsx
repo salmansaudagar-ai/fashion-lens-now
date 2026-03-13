@@ -126,118 +126,115 @@ export const OutputDisplay: React.FC = () => {
     }, 300);
   };
 
-  // ── Poll for sessions ─────────────────────────────────────────────────────
+  // ── Shared headers (stable ref) ──────────────────────────────────────────
+  const headersRef = useRef({
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  });
+
+  // ── Poll for sessions (single combined query per cycle) ─────────────────
   useEffect(() => {
     const poll = async () => {
       try {
-        const headers = {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        };
+        const headers = headersRef.current;
 
         if (displayState === 'loading' && loadingStartTime.current) {
-          const elapsed = Date.now() - loadingStartTime.current;
-          if (elapsed > LOADING_TIMEOUT_MS) {
+          if (Date.now() - loadingStartTime.current > LOADING_TIMEOUT_MS) {
             console.warn('Loading timeout reached, resetting to idle');
             resetToIdle();
             return;
           }
         }
 
-        if (displayState === 'idle') {
-          const pendingRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?selfie_url=not.is.null&full_body_url=is.null&updated_at=gte.${new Date(Date.now() - 10 * 60 * 1000).toISOString()}&order=updated_at.desc&limit=1&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url`,
-            { headers }
-          );
-          if (pendingRes.ok) {
-            const pending: SessionOutput[] = await pendingRes.json();
-            if (pending?.[0] && !captureHandledIds.current.has(pending[0].id) && !dismissedSessionIds.current.has(pending[0].id)) {
-              captureHandledIds.current.add(pending[0].id);
-              setCurrentSessionId(pending[0].id);
-              setCaptureSession({ id: pending[0].id, token: pending[0].session_token });
-              setDisplayState('capture');
-              return;
-            }
-          }
-        }
-
+        // ── IDLE: single query finds both capture-pending AND generating sessions ──
         if (displayState === 'idle' || displayState === 'capture_done') {
-          const genRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?registration_status=eq.generating&generated_look_url=is.null&updated_at=gte.${new Date(Date.now() - 3 * 60 * 1000).toISOString()}&order=updated_at.desc&limit=1&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url`,
+          const cutoff10m = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${cutoff10m}&order=updated_at.desc&limit=5&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url`,
             { headers }
           );
-          if (genRes.ok) {
-            const genData: SessionOutput[] = await genRes.json();
-            if (genData?.[0] && !dismissedSessionIds.current.has(genData[0].id)) {
-              setCurrentSessionId(genData[0].id);
-              loadingStartTime.current = Date.now();
-              setDisplayState('loading');
-              return;
-            }
-          }
-        }
+          if (res.ok) {
+            const rows: SessionOutput[] = await res.json();
+            for (const row of rows) {
+              if (dismissedSessionIds.current.has(row.id)) continue;
 
-        if ((displayState === 'capture_done' || displayState === 'loading' || displayState === 'ready') && currentSessionId) {
-          // Query by generated_look_url (allowed by RLS for anon) — this works once generation completes
-          const lookRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${currentSessionId}&generated_look_url=not.is.null&select=id,session_token,registration_status,generated_look_url,generated_video_url,body_measurements`,
-            { headers }
-          );
-          const lookData: SessionOutput[] = await lookRes.json();
-          if (lookData?.[0]) {
-            const { id, generated_look_url, generated_video_url, body_measurements } = lookData[0];
-            if (dismissedSessionIds.current.has(id)) return;
-            const hasNewLook = generated_look_url && generated_look_url !== generatedLook;
-            if (hasNewLook && generated_look_url) {
-              displayStartTime.current = Date.now();
-              setIsTransitioning(true);
-              setTimeout(() => {
-                setGeneratedLook(generated_look_url);
-                setVideoUrl(null);
-                setMeasurements(body_measurements ?? null);
-                setShowMeasurements(!!body_measurements);
-                setCurrentSessionId(id);
-                setDisplayState('ready');
-                setCaptureSession(null);
-                setIsTransitioning(false);
-              }, 300);
+              // Capture-pending: has selfie but no full body
+              if (displayState === 'idle' && row.selfie_url && !row.full_body_url && !captureHandledIds.current.has(row.id)) {
+                captureHandledIds.current.add(row.id);
+                setCurrentSessionId(row.id);
+                setCaptureSession({ id: row.id, token: row.session_token });
+                setDisplayState('capture');
+                return;
+              }
 
-              // Trigger video generation (fire-and-forget from frontend)
-              if (!videoRequestedIds.current.has(id)) {
-                videoRequestedIds.current.add(id);
-                fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
-                  method: 'POST',
-                  headers: { ...headers, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sessionId: id }),
-                }).then(r => console.log(`Video generation triggered: ${r.status}`))
-                  .catch(e => console.error('Video trigger failed:', e));
+              // Generating: waiting for look
+              if (row.registration_status === 'generating' && !row.generated_look_url) {
+                setCurrentSessionId(row.id);
+                loadingStartTime.current = Date.now();
+                setDisplayState('loading');
+                return;
               }
             }
-            // Update measurements if they arrive after initial load
-            if (displayState === 'ready' && body_measurements && !measurements) {
+          }
+        }
+
+        // ── LOADING/READY: poll only current session ──
+        if ((displayState === 'capture_done' || displayState === 'loading' || displayState === 'ready') && currentSessionId) {
+          const lookRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${currentSessionId}&select=id,session_token,registration_status,generated_look_url,generated_video_url,body_measurements`,
+            { headers }
+          );
+          if (!lookRes.ok) return;
+          const lookData: SessionOutput[] = await lookRes.json();
+          const row = lookData?.[0];
+          if (!row || dismissedSessionIds.current.has(row.id)) return;
+
+          const { id, generated_look_url, generated_video_url, body_measurements, registration_status } = row;
+
+          // New look arrived
+          if (generated_look_url && generated_look_url !== generatedLook) {
+            displayStartTime.current = Date.now();
+            setIsTransitioning(true);
+            setTimeout(() => {
+              setGeneratedLook(generated_look_url);
+              setVideoUrl(null);
+              setMeasurements(body_measurements ?? null);
+              setShowMeasurements(!!body_measurements);
+              setCurrentSessionId(id);
+              setDisplayState('ready');
+              setCaptureSession(null);
+              setIsTransitioning(false);
+            }, 300);
+
+            // Trigger video generation (fire-and-forget)
+            if (!videoRequestedIds.current.has(id)) {
+              videoRequestedIds.current.add(id);
+              fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
+                method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: id }),
+              }).catch(e => console.error('Video trigger failed:', e));
+            }
+            return;
+          }
+
+          // Update measurements/video if they arrive after initial look
+          if (displayState === 'ready') {
+            if (body_measurements && !measurements) {
               setMeasurements(body_measurements);
               setShowMeasurements(true);
             }
-            if (displayState === 'ready' && generated_video_url && generated_video_url !== videoUrl && generatedLook) {
+            if (generated_video_url && generated_video_url !== videoUrl && generatedLook) {
               displayStartTime.current = Date.now();
               setVideoUrl(generated_video_url);
             }
             return;
           }
 
-          // If still in loading and no look yet, check if 'generating' status has ended (failed/reset)
-          // by querying sessions still in generating state for this ID
-          if (displayState === 'loading') {
-            const stillGenRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${currentSessionId}&registration_status=eq.generating&select=id`,
-              { headers }
-            );
-            const stillGenData = await stillGenRes.json();
-            // If generation status is gone (no longer 'generating') and no look URL, generation failed — reset
-            if (Array.isArray(stillGenData) && stillGenData.length === 0) {
-              console.warn('Session no longer generating and no look URL found — resetting to idle');
-              resetToIdle();
-            }
+          // Generation failed: no longer generating and no look
+          if (displayState === 'loading' && registration_status !== 'generating' && !generated_look_url) {
+            console.warn('Session no longer generating and no look URL — resetting');
+            resetToIdle();
           }
         }
       } catch (error) {
@@ -248,7 +245,7 @@ export const OutputDisplay: React.FC = () => {
     poll();
     const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
-  }, [displayState, generatedLook, videoUrl, currentSessionId]);
+  }, [displayState, generatedLook, videoUrl, currentSessionId, measurements]);
 
   const handleCaptureComplete = useCallback(() => {
     setDisplayState('capture_done');

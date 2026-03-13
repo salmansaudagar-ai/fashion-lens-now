@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -79,14 +79,29 @@ const ModelComparison: React.FC = () => {
     setHealth(status);
   }, [addLog]);
 
-  useEffect(() => { fetchSessions(); }, [fetchSessions]);
-  useEffect(() => { runHealthCheck(); const i = setInterval(runHealthCheck, 60_000); return () => clearInterval(i); }, [runHealthCheck]);
-  useEffect(() => { const i = setInterval(fetchSessions, 10_000); return () => clearInterval(i); }, [fetchSessions]);
+  // Consolidated polling: sessions every 10s, health every 60s (single interval)
+  useEffect(() => { fetchSessions(); runHealthCheck(); }, [fetchSessions, runHealthCheck]);
+  useEffect(() => {
+    let tick = 0;
+    const i = setInterval(() => {
+      tick++;
+      fetchSessions();
+      if (tick % 6 === 0) runHealthCheck(); // every 60s (6 × 10s)
+    }, 10_000);
+    return () => clearInterval(i);
+  }, [fetchSessions, runHealthCheck]);
 
-  const totalGenerations = sessions.reduce((sum, s) => sum + s.generation_count, 0);
-  const withLooks = sessions.filter(s => s.generated_look_url).length;
-  const withVideos = sessions.filter(s => s.generated_video_url).length;
-  const withMeasurements = sessions.filter(s => s.body_measurements).length;
+  // Memoized stats (single pass)
+  const { totalGenerations, withLooks, withVideos, withMeasurements } = useMemo(() => {
+    let gens = 0, looks = 0, vids = 0, meas = 0;
+    for (const s of sessions) {
+      gens += s.generation_count;
+      if (s.generated_look_url) looks++;
+      if (s.generated_video_url) vids++;
+      if (s.body_measurements) meas++;
+    }
+    return { totalGenerations: gens, withLooks: looks, withVideos: vids, withMeasurements: meas };
+  }, [sessions]);
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e5e5e5', fontFamily: 'system-ui, -apple-system, sans-serif' }}>

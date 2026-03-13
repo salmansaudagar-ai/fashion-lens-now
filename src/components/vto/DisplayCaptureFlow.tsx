@@ -142,15 +142,20 @@ const AutoTimerPill: React.FC<{ seconds: number; onCaptureNow: () => void }> = (
 const AutoConfirmOverlay: React.FC<{ photo: string; onRetake: () => void; onConfirm: () => void; isSaving: boolean; label: string }> = ({ photo, onRetake, onConfirm, isSaving, label }) => {
   const [remaining, setRemaining] = useState(5);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const confirmedRef = useRef(false);
   useEffect(() => {
     intervalRef.current = setInterval(() => {
       setRemaining(prev => {
-        if (prev <= 1) { if (intervalRef.current) clearInterval(intervalRef.current); setTimeout(onConfirm, 0); return 0; }
+        if (prev <= 1) {
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          if (!confirmedRef.current) { confirmedRef.current = true; setTimeout(onConfirm, 0); }
+          return 0;
+        }
         return prev - 1;
       });
     }, 1000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+    return () => { if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [onConfirm]);
 
   return (
     <div className="fixed inset-0 bg-background flex flex-col animate-fade-in">
@@ -180,18 +185,37 @@ const AutoConfirmOverlay: React.FC<{ photo: string; onRetake: () => void; onConf
   );
 };
 
+// ─── Compress image to max dimension and quality ─────────────────────────────
+function compressImage(base64: string, maxDim = 1920, quality = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('No 2d context'));
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/jpeg', quality);
+    };
+    img.onerror = reject;
+    img.src = base64;
+  });
+}
+
 // ─── Upload helper (direct REST, no VTOContext) ─────────────────────────────
 async function uploadImageToStorage(base64: string, sessionToken: string, type: 'selfie' | 'fullbody'): Promise<string | null> {
-  const arr = base64.split(',');
-  const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) u8arr[n] = bstr.charCodeAt(n);
-  const file = new File([u8arr], `${type}.jpg`, { type: mime });
+  // Compress image before upload (reduces ~60-70% file size)
+  const blob = await compressImage(base64);
   const filename = `${sessionToken}/${type}-${Date.now()}.jpg`;
 
-  console.log(`[DisplayCapture] Uploading ${type}, size: ${file.size} bytes, filename: ${filename}`);
+  console.log(`[DisplayCapture] Uploading ${type}, size: ${(blob.size / 1024).toFixed(0)} KB, filename: ${filename}`);
 
   const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/vto-images/${filename}`, {
     method: 'POST',
@@ -199,9 +223,9 @@ async function uploadImageToStorage(base64: string, sessionToken: string, type: 
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
       'x-session-token': sessionToken,
-      'Content-Type': mime,
+      'Content-Type': 'image/jpeg',
     },
-    body: file,
+    body: blob,
   });
   if (!uploadRes.ok) {
     const errText = await uploadRes.text().catch(() => '');
@@ -277,7 +301,7 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
     try {
       // Always use the external/environment (rear) camera on the display screen
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { exact: 'environment' }, width: { ideal: 4096 }, height: { ideal: 4096 } },
+        video: { facingMode: { exact: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1920 } },
         audio: false,
       });
       streamRef.current = stream;
@@ -287,7 +311,7 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
       // Fallback: try without exact constraint in case device only has one camera
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 4096 }, height: { ideal: 4096 } },
+          video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1920 } },
           audio: false,
         });
         streamRef.current = stream;
