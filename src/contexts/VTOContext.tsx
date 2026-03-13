@@ -52,12 +52,10 @@ export const VTOProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [excludedCategory, setExcludedCategory] = useState<OutfitCategory | null>(null);
 
   const selectOutfitItem = (item: OutfitItem) => {
-    setSelectedOutfit({
-      topwear: null,
-      bottomwear: null,
-      footwear: null,
+    setSelectedOutfit(prev => ({
+      ...prev,
       [item.category]: item,
-    });
+    }));
   };
 
   const clearOutfitCategory = (category: 'topwear' | 'bottomwear' | 'footwear') => {

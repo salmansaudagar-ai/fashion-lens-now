@@ -33,7 +33,15 @@ const imageUrlToBase64 = async (imageUrl: string): Promise<string> => {
 
 export const OutfitSelectionStep: React.FC = () => {
   const { selectedOutfit, selectOutfitItem, setCurrentStep, setGeneratedLook, capturedImages, sessionToken, sessionId, pendingTryItem, setPendingTryItem, excludedCategory, setExcludedCategory } = useVTO();
-  const [activeFilter, setActiveFilter] = useState<FilterCategory>('all');
+  // Auto-set filter when coming from outfit builder's "Add ..." button
+  const [activeFilter, setActiveFilter] = useState<FilterCategory>(() => {
+    const target = sessionStorage.getItem('vto_target_category');
+    if (target && ['topwear', 'bottomwear', 'footwear'].includes(target)) {
+      sessionStorage.removeItem('vto_target_category');
+      return target as OutfitCategory;
+    }
+    return 'all';
+  });
 
   // Persist selfie to sessionStorage so ProductDetail (outside VTOProvider) can read it
   React.useEffect(() => {
@@ -72,6 +80,21 @@ export const OutfitSelectionStep: React.FC = () => {
   })();
 
   const selectedItem = selectedOutfit.topwear || selectedOutfit.bottomwear || selectedOutfit.footwear;
+
+  // Sync garment URL to database for big screen "Mirror the Journey"
+  const handleSelectItem = (item: OutfitItem) => {
+    selectOutfitItem(item);
+    // Fire-and-forget: update garment_url in session so display screen shows the garment
+    const activeToken = sessionToken || sessionStorage.getItem('vto_session_token');
+    if (activeToken) {
+      const garmentUrl = item.imageUrl.startsWith('/') ? `${window.location.origin}${item.imageUrl}` : item.imageUrl;
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionToken: activeToken, updates: { garment_url: garmentUrl } }),
+      }).catch(() => { /* non-critical */ });
+    }
+  };
 
   const handleTryLook = async (item: OutfitItem) => {
     // Priority: layered base (from "Try More Clothes") > local full body > sessionStorage > DB
@@ -447,7 +470,7 @@ export const OutfitSelectionStep: React.FC = () => {
                 key={item.id}
                 item={item}
                 isSelected={selectedItem?.id === item.id}
-                onSelect={selectOutfitItem}
+                onSelect={handleSelectItem}
                 onTryLook={handleTryLook}
               />
             ))}

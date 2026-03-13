@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useVTO } from '@/contexts/VTOContext';
-import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy } from 'lucide-react';
+import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy, Plus, ShoppingBag, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { extractBodyMeasurements, BodyMeasurements } from '@/hooks/useBodyMeasurements';
+import { OutfitCategory } from '@/types/vto';
 
 interface ModelResultInfo {
   model: string;
@@ -19,7 +20,7 @@ interface ModelResultInfo {
 }
 
 export const VirtualLookStep: React.FC = () => {
-  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId } = useVTO();
+  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId, clearOutfitCategory, setExcludedCategory } = useVTO();
   const navigate = useNavigate();
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
@@ -640,40 +641,71 @@ export const VirtualLookStep: React.FC = () => {
               </div>
             )}
 
-            {/* Selected Items */}
-            <div className="glass-card rounded-2xl p-5">
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Selected Items</h3>
+            {/* Complete Your Look — Outfit Builder */}
+            <div className="glass-card rounded-2xl p-5 border border-primary/20">
+              <div className="flex items-center gap-2 mb-4">
+                <ShoppingBag className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">Complete Your Look</h3>
+              </div>
               <div className="space-y-2">
-                {selectedItems.map((item) => (
-                  <div
-                    key={item!.id}
-                    className="flex items-center gap-3 p-2 rounded-xl bg-secondary/50"
-                  >
-                    <img
-                      src={item!.imageUrl}
-                      alt={item!.name}
-                      className="w-12 h-12 rounded-lg object-cover"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {item!.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground capitalize">
-                        {item!.category}
-                      </p>
+                {(['topwear', 'bottomwear', 'footwear'] as OutfitCategory[]).map(cat => {
+                  const item = selectedOutfit[cat];
+                  const labels: Record<OutfitCategory, string> = { topwear: 'Topwear', bottomwear: 'Bottomwear', footwear: 'Footwear' };
+                  return (
+                    <div key={cat} className="flex items-center gap-3 p-2 rounded-xl bg-secondary/50 min-h-[52px]">
+                      {item ? (
+                        <>
+                          <img src={item.imageUrl} alt={item.name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
+                            <p className="text-[10px] text-muted-foreground">{item.sellingPrice ? `₹${item.sellingPrice.toLocaleString('en-IN')}` : labels[cat]}</p>
+                          </div>
+                          <button
+                            onClick={() => clearOutfitCategory(cat)}
+                            className="p-1 rounded-full hover:bg-muted transition-colors flex-shrink-0"
+                            aria-label={`Remove ${labels[cat]}`}
+                          >
+                            <X className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            // Navigate to catalog filtered to this category
+                            sessionStorage.setItem('vto_target_category', cat);
+                            setCurrentStep(3);
+                          }}
+                          className="flex items-center gap-3 w-full text-left group"
+                        >
+                          <div className="w-10 h-10 rounded-lg border-2 border-dashed border-border group-hover:border-primary/50 flex items-center justify-center transition-colors flex-shrink-0">
+                            <Plus className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                          </div>
+                          <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">Add {labels[cat]}</span>
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
-            {/* Primary Actions */}
+            {/* Checkout & Actions */}
             <div className="space-y-3">
+              {/* Checkout — always visible */}
+              <button
+                className="btn-primary-vto w-full flex items-center justify-center gap-3"
+                style={{ background: 'linear-gradient(135deg, hsl(25 95% 53%) 0%, hsl(25 95% 45%) 100%)' }}
+                onClick={() => toast.success('Store assistant notified! They will bring your items shortly.')}
+              >
+                <ShoppingBag className="w-5 h-5" />
+                Checkout ({selectedItems.length} {selectedItems.length === 1 ? 'item' : 'items'})
+              </button>
+
               {!showTabs && (
                 <button
                   onClick={handleGenerate360Video}
                   disabled={!generatedLook || isGeneratingVideo || isRegenerating}
-                  className="btn-primary-vto w-full flex items-center justify-center gap-3"
+                  className="btn-secondary-vto w-full flex items-center justify-center gap-3"
                 >
                   <Video className={`w-5 h-5 ${isGeneratingVideo ? 'animate-pulse' : ''}`} />
                   {isGeneratingVideo ? 'Generating Video...' : 'Generate 360 Video'}
@@ -690,6 +722,7 @@ export const VirtualLookStep: React.FC = () => {
 
               <button
                 className="btn-secondary-vto w-full flex items-center justify-center gap-3 border-primary/30"
+                onClick={() => toast.success('Store assistant has been notified and is on the way!')}
               >
                 <Bell className="w-5 h-5" />
                 Call Store Assistant

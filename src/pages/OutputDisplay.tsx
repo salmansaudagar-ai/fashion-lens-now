@@ -36,7 +36,7 @@ interface SessionOutput {
   body_measurements: BodyMeasurements | null;
 }
 
-type DisplayState = 'idle' | 'capture' | 'capture_done' | 'loading' | 'ready';
+type DisplayState = 'idle' | 'capture' | 'capture_done' | 'browsing' | 'loading' | 'ready';
 
 const DISPLAY_DURATION_MS = 2 * 60 * 1000;
 
@@ -59,6 +59,8 @@ export const OutputDisplay: React.FC = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [captureSession, setCaptureSession] = useState<{ id: string; token: string } | null>(null);
   const [activeScreen, setActiveScreen] = useState<string>('1');
+  const [browsingFullBody, setBrowsingFullBody] = useState<string | null>(null);
+  const [browsingGarment, setBrowsingGarment] = useState<string | null>(null);
   const displayStartTime = useRef<number | null>(null);
   const loadingStartTime = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -122,6 +124,8 @@ export const OutputDisplay: React.FC = () => {
       setShowMeasurements(false);
       setCurrentSessionId(null);
       setCaptureSession(null);
+      setBrowsingFullBody(null);
+      setBrowsingGarment(null);
       displayStartTime.current = null;
       setIsTransitioning(false);
     }, 300);
@@ -147,15 +151,15 @@ export const OutputDisplay: React.FC = () => {
           }
         }
 
-        // ── IDLE: single query finds both capture-pending AND generating sessions ──
-        if (displayState === 'idle' || displayState === 'capture_done') {
+        // ── IDLE/BROWSING: single query finds capture-pending, generating, AND browsing sessions ──
+        if (displayState === 'idle' || displayState === 'capture_done' || displayState === 'browsing') {
           const cutoff10m = new Date(Date.now() - 10 * 60 * 1000).toISOString();
           const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${cutoff10m}&order=updated_at.desc&limit=5&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url,updated_at`,
+            `${SUPABASE_URL}/rest/v1/vto_sessions?updated_at=gte.${cutoff10m}&order=updated_at.desc&limit=5&select=id,session_token,registration_status,selfie_url,full_body_url,generated_look_url,generated_video_url,garment_url,updated_at`,
             { headers }
           );
           if (res.ok) {
-            const rows: (SessionOutput & { updated_at?: string })[] = await res.json();
+            const rows: (SessionOutput & { updated_at?: string; garment_url?: string })[] = await res.json();
             for (const row of rows) {
               if (dismissedSessionIds.current.has(row.id)) continue;
 
@@ -181,13 +185,31 @@ export const OutputDisplay: React.FC = () => {
                 return;
               }
 
-              // Generating: waiting for look
+              // Generating: waiting for look — takes priority over browsing
               if (row.registration_status === 'generating' && !row.generated_look_url) {
                 setCurrentSessionId(row.id);
                 loadingStartTime.current = Date.now();
+                setBrowsingFullBody(null);
+                setBrowsingGarment(null);
                 setDisplayState('loading');
                 return;
               }
+
+              // Browsing: has full body photo, registered, no generated look yet — customer is browsing catalog
+              if (row.full_body_url && row.registration_status === 'registered' && !row.generated_look_url) {
+                setCurrentSessionId(row.id);
+                setBrowsingFullBody(row.full_body_url);
+                setBrowsingGarment(row.garment_url || null);
+                if (displayState !== 'browsing') setDisplayState('browsing');
+                return;
+              }
+            }
+
+            // No browsing session found — go back to idle if we were browsing
+            if (displayState === 'browsing') {
+              setBrowsingFullBody(null);
+              setBrowsingGarment(null);
+              setDisplayState('idle');
             }
           }
         }
@@ -298,6 +320,84 @@ export const OutputDisplay: React.FC = () => {
     );
   }
 
+  // ── Browsing — Mirror the Journey ────────────────────────────────────────
+  if (displayState === 'browsing' && browsingFullBody) {
+    return (
+      <div className="fixed inset-0 bg-[hsl(var(--charcoal-deep))] flex items-center justify-center overflow-hidden">
+        {/* Blurred background */}
+        <div className="absolute inset-0">
+          <img src={browsingFullBody} alt="" className="w-full h-full object-cover scale-110" style={{ filter: 'blur(50px)', opacity: 0.15 }} />
+        </div>
+
+        <div className="relative flex items-center gap-10" style={{ height: '90vh' }}>
+          {/* Customer full body photo */}
+          <div
+            className="relative overflow-hidden rounded-3xl flex-shrink-0"
+            style={{
+              height: '85vh',
+              width: 'calc(85vh * 9 / 16)',
+              boxShadow: '0 40px 120px rgba(0,0,0,0.7)',
+              animation: 'fadeSlideIn 0.8s ease-out forwards',
+            }}
+          >
+            <img src={browsingFullBody} alt="Your photo" className="absolute inset-0 w-full h-full object-cover" />
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-8">
+              <p className="text-white/50 text-sm font-medium tracking-widest uppercase">Your Photo</p>
+            </div>
+          </div>
+
+          {/* Garment preview (if browsing a specific item) or prompt */}
+          <div className="flex flex-col items-center gap-8" style={{ animation: 'fadeSlideIn 1s ease-out 0.2s both' }}>
+            {browsingGarment ? (
+              <div
+                className="overflow-hidden rounded-3xl flex-shrink-0"
+                style={{
+                  height: '60vh',
+                  width: 'calc(60vh * 3 / 4)',
+                  boxShadow: '0 30px 80px rgba(0,0,0,0.5)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <img src={browsingGarment} alt="Selected garment" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div
+                className="flex flex-col items-center justify-center gap-6 px-12 py-16 rounded-3xl"
+                style={{
+                  background: 'rgba(15, 15, 20, 0.7)',
+                  backdropFilter: 'blur(24px)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  maxWidth: '400px',
+                }}
+              >
+                <div className="w-20 h-20 rounded-full bg-primary/10 border-2 border-primary/20 flex items-center justify-center">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="hsl(var(--primary))" strokeWidth={1.5}>
+                    <path d="M20.38 3.46L16 2l-4 2-4-2L3.62 3.46a2 2 0 00-1.34 2.23l1.25 7.51a2 2 0 00.84 1.28L12 20l7.63-5.52a2 2 0 00.84-1.28l1.25-7.51a2 2 0 00-1.34-2.23z" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <div className="text-center">
+                  <h2 className="text-2xl font-display font-semibold text-white/90 mb-2">Browsing Styles</h2>
+                  <p className="text-base text-white/40 leading-relaxed">Pick a garment on the kiosk to see how it looks on you</p>
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <img src={trendsLogo} alt="Trends" className="h-5 object-contain opacity-30" />
+              <span className="text-xs text-white/20 tracking-[0.3em] uppercase font-medium">Infinite Studio</span>
+            </div>
+          </div>
+        </div>
+
+        <style>{`
+          @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   // ── Loading ───────────────────────────────────────────────────────────────
   if (displayState === 'loading') {
     return (
@@ -364,7 +464,7 @@ export const OutputDisplay: React.FC = () => {
             <div
               className="flex-shrink-0 rounded-2xl overflow-hidden"
               style={{
-                width: '300px',
+                width: '340px',
                 maxHeight: '95vh',
                 background: 'rgba(15, 15, 20, 0.88)',
                 backdropFilter: 'blur(24px)',
@@ -376,15 +476,15 @@ export const OutputDisplay: React.FC = () => {
               {/* Recommended Size — Hero */}
               {measurements.recommended_size && (
                 <div className="px-6 pt-8 pb-5 text-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                  <p className="text-[10px] font-semibold tracking-[0.35em] uppercase text-white/35 mb-3">Suggested Size</p>
+                  <p className="text-xs font-semibold tracking-[0.35em] uppercase text-white/35 mb-3">Suggested Size</p>
                   <div
-                    className="inline-flex items-center justify-center w-20 h-20 rounded-full mb-3"
+                    className="inline-flex items-center justify-center w-24 h-24 rounded-full mb-3"
                     style={{
                       background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary)/0.6) 100%)',
                       boxShadow: '0 8px 32px hsla(var(--primary), 0.25)',
                     }}
                   >
-                    <span className="text-3xl font-bold text-white">{measurements.recommended_size}</span>
+                    <span className="text-4xl font-bold text-white">{measurements.recommended_size}</span>
                   </div>
                   {measurements.build && (
                     <p className="text-xs text-white/40 capitalize">{measurements.build} build</p>
@@ -394,7 +494,7 @@ export const OutputDisplay: React.FC = () => {
 
               {/* Body Measurements List */}
               <div className="px-6 py-4">
-                <p className="text-[10px] font-semibold tracking-[0.25em] uppercase text-white/35 mb-3">Body Measurements</p>
+                <p className="text-xs font-semibold tracking-[0.25em] uppercase text-white/35 mb-3">Body Measurements</p>
                 <div className="space-y-2.5">
                   {measurements.height_cm != null && <MeasRow label="Height" value={`${measurements.height_cm} cm`} />}
                   {measurements.shoulder_width_cm != null && <MeasRow label="Shoulders" value={`${measurements.shoulder_width_cm} cm`} />}
@@ -438,8 +538,8 @@ export const OutputDisplay: React.FC = () => {
 function MeasRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-sm text-white/45">{label}</span>
-      <span className="text-sm font-medium text-white/85 tabular-nums">{value}</span>
+      <span className="text-base text-white/45">{label}</span>
+      <span className="text-base font-semibold text-white/90 tabular-nums">{value}</span>
     </div>
   );
 }

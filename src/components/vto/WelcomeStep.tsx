@@ -93,7 +93,7 @@ export const WelcomeStep: React.FC = () => {
           <button
             onClick={handleSkip}
             disabled={loadingQR || loadingSkip}
-            className="w-full flex items-center justify-center gap-3 bg-transparent border border-border text-foreground rounded-full py-6 text-xl font-medium hover:bg-muted/50 active:scale-[0.98] transition-all duration-150 disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-3 bg-white/5 border-2 border-white/20 text-white/90 rounded-full py-6 text-xl font-medium hover:bg-white/10 hover:border-white/30 active:scale-[0.98] transition-all duration-150 disabled:opacity-60"
           >
             {loadingSkip ? (
               <Loader2 className="w-6 h-6 animate-spin" />

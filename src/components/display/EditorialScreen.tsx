@@ -76,6 +76,7 @@ export const EditorialScreen: React.FC = () => {
             style={{
               animation: i === current ? 'ken-burns 7s ease-out forwards' : 'none',
               transformOrigin: '60% 40%',
+              willChange: i === current ? 'transform' : 'auto',
             }}
           />
         </div>

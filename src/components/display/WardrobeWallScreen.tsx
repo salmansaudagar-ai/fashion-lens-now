@@ -68,6 +68,7 @@ const WardrobeColumn: React.FC<{
           flexDirection: 'column',
           gap: '12px',
           animation: `${animName} ${duration}s linear ${delay}s infinite`,
+          willChange: 'transform',
         }}
       >
         {doubled.map((src, i) => (

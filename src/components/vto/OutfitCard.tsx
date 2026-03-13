@@ -15,7 +15,7 @@ function calcDiscount(actual?: number, selling?: number): number | null {
   return Math.round(((actual - selling) / actual) * 100);
 }
 
-export const OutfitCard: React.FC<OutfitCardProps> = ({ item, isSelected }) => {
+export const OutfitCard: React.FC<OutfitCardProps> = ({ item, isSelected, onSelect }) => {
   const [imageLoaded, setImageLoaded] = useState(false);
   const navigate = useNavigate();
 
@@ -23,9 +23,14 @@ export const OutfitCard: React.FC<OutfitCardProps> = ({ item, isSelected }) => {
   const displayPrice = item.sellingPrice ?? item.price;
   const originalPrice = item.actualPrice && item.actualPrice !== displayPrice ? item.actualPrice : null;
 
+  const handleClick = () => {
+    onSelect(item); // Sync garment to big screen
+    navigate(`/product/${item.id}`);
+  };
+
   return (
     <div
-      onClick={() => navigate(`/product/${item.id}`)}
+      onClick={handleClick}
       className={cn(
         'group cursor-pointer rounded-2xl overflow-hidden bg-card border transition-all duration-200',
         isSelected
@@ -39,6 +44,7 @@ export const OutfitCard: React.FC<OutfitCardProps> = ({ item, isSelected }) => {
         <img
           src={item.imageUrl}
           alt={item.name}
+          loading="lazy"
           onLoad={() => setImageLoaded(true)}
           className={cn(
             'w-full h-full object-cover transition-all duration-500 group-hover:scale-105',
