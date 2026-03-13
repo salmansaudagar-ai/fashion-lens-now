@@ -4,8 +4,8 @@ import { Trophy, Clock, AlertCircle, CheckCircle2, Loader2, RefreshCw, RotateCcw
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// The models we always show (4 models including Gemini VTO)
-const MODEL_NAMES = ['CatVTON-FLUX', 'IDM-VTON', 'Vertex AI', 'Gemini VTO'];
+// Single model — Gemini VTO
+const MODEL_NAMES = ['Gemini VTO'];
 
 interface ModelResult {
   model: string;
@@ -143,7 +143,7 @@ const ModelComparison: React.FC = () => {
           <div>
             <h1 className="text-xl font-bold">Model Comparison</h1>
             <p className="text-sm text-gray-400">
-              Internal view — real-time input & output from all 3 models
+              Internal view — Gemini 2.5 Flash Image VTO
               {lastUpdated && <span className="ml-2 text-gray-600">· updated {lastUpdated}</span>}
             </p>
           </div>
@@ -302,7 +302,7 @@ const ModelComparison: React.FC = () => {
 
         {/* AI Reasoning */}
         <section className="max-w-3xl">
-          <h2 className="text-lg font-semibold text-gray-300 mb-3">AI Judge Reasoning</h2>
+          <h2 className="text-lg font-semibold text-gray-300 mb-3">Result</h2>
           <div className="bg-white/5 border border-white/10 rounded-xl p-5 min-h-[60px]">
             {reasoning ? (
               <p className="text-sm text-gray-300 leading-relaxed">{reasoning}</p>
