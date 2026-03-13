@@ -5,7 +5,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 // The 3 models we always show
-const MODEL_NAMES = ['IDM-VTON', 'OmniGen', 'Vertex AI'];
+const MODEL_NAMES = ['CatVTON-FLUX', 'IDM-VTON', 'Vertex AI'];
 
 interface ModelResult {
   model: string;
