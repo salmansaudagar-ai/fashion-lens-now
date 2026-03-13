@@ -83,6 +83,71 @@ async function getGcpAccessToken(saJson: string): Promise<string> {
   return access_token;
 }
 
+// ── Gemini Body Measurements ─────────────────────────────────
+
+async function extractMeasurements(
+  personBase64: string,
+  accessToken: string,
+): Promise<Record<string, any>> {
+  const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
+
+  const parts = [
+    { text: `Analyze this full-body photo and estimate the person's body measurements and recommended clothing size.
+
+TASK: Provide approximate body measurements based on visual analysis of this full-body standing photo.
+
+OUTPUT FORMAT: Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
+{
+  "height_cm": <estimated height in cm>,
+  "shoulder_width_cm": <shoulder width in cm>,
+  "chest_cm": <chest circumference in cm>,
+  "waist_cm": <waist circumference in cm>,
+  "hip_cm": <hip circumference in cm>,
+  "arm_length_cm": <arm length in cm>,
+  "inseam_cm": <inseam length in cm>,
+  "build": "<slim|average|athletic|broad>",
+  "recommended_size": "<XS|S|M|L|XL|XXL>",
+  "confidence": "<low|medium|high>"
+}
+
+Important: These are approximate visual estimates. Base them on proportions visible in the photo. If the person appears average height (170cm for men, 160cm for women), use that as a reference point.` },
+    { inlineData: { mimeType: "image/jpeg", data: personBase64 } },
+  ];
+
+  console.log("[Measurements] Calling Gemini for body analysis...");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: { temperature: 0.2 },
+    }),
+  });
+
+  if (!res.ok) {
+    console.error(`[Measurements] Gemini error: ${res.status}`);
+    return {};
+  }
+
+  const data = await res.json();
+  const textParts = data.candidates?.[0]?.content?.parts ?? [];
+  let rawText = "";
+  for (const p of textParts) {
+    if (p.text) { rawText += p.text; }
+  }
+
+  // Parse JSON from response (strip markdown code fences if present)
+  try {
+    const jsonStr = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const measurements = JSON.parse(jsonStr);
+    console.log("[Measurements] Extracted:", JSON.stringify(measurements));
+    return measurements;
+  } catch (e) {
+    console.error("[Measurements] Parse error:", e, "Raw:", rawText.substring(0, 200));
+    return {};
+  }
+}
+
 // ── Gemini VTO ───────────────────────────────────────────────
 
 async function runGeminiVTO(
@@ -278,6 +343,18 @@ serve(async (req) => {
     // Run Gemini VTO
     const result = await runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, selfieRawB64);
 
+    // ── Extract body measurements (parallel-safe, non-blocking) ──
+    let measurements: Record<string, any> = {};
+    try {
+      const saJsonForMeasure = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
+      if (saJsonForMeasure) {
+        const measureToken = await getGcpAccessToken(saJsonForMeasure);
+        measurements = await extractMeasurements(personRawB64, measureToken);
+      }
+    } catch (measureErr) {
+      console.error("[VTO] Measurement extraction failed:", measureErr);
+    }
+
     // Upload generated image to storage
     const bytes = Uint8Array.from(atob(result.imageBase64), (c) => c.charCodeAt(0));
     const path = `generated-looks/gemini-vto-${session.id}-${Date.now()}.jpg`;
@@ -377,7 +454,7 @@ serve(async (req) => {
       generatedAt: new Date().toISOString(),
     };
 
-    // Update session in one atomic write
+    // Update session in one atomic write (include measurements)
     await supabase
       .from("vto_sessions")
       .update({
@@ -385,11 +462,14 @@ serve(async (req) => {
         generated_look_url: imageUrl,
         garment_url: garmentUrl,
         model_comparison_data: modelComparisonData,
+        body_measurements: Object.keys(measurements).length > 0 ? measurements : null,
         registration_status: "registered",
       })
       .eq("id", session.id);
 
-    console.log(`[VTO] Done! Gemini VTO ${result.durationMs}ms, count: ${session.generation_count + 1}`);
+    console.log(`[VTO] Done! Gemini VTO ${result.durationMs}ms, measurements: ${Object.keys(measurements).length > 0 ? 'yes' : 'no'}, count: ${session.generation_count + 1}`);
+
+    // Video generation is triggered separately by the frontend via /generate-video
 
     return new Response(
       JSON.stringify({
@@ -404,6 +484,8 @@ serve(async (req) => {
           durationMs: result.durationMs,
           imageUrl,
         }],
+        measurements,
+        videoGenerating: true,
         generationsRemaining: MAX_GENERATIONS_PER_SESSION - session.generation_count - 1,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

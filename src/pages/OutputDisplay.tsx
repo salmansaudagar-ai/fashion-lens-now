@@ -11,6 +11,19 @@ import { SpotlightCarouselScreen } from '@/components/display/SpotlightCarouselS
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+interface BodyMeasurements {
+  height_cm?: number;
+  shoulder_width_cm?: number;
+  chest_cm?: number;
+  waist_cm?: number;
+  hip_cm?: number;
+  arm_length_cm?: number;
+  inseam_cm?: number;
+  build?: string;
+  recommended_size?: string;
+  confidence?: string;
+}
+
 interface SessionOutput {
   id: string;
   session_token: string;
@@ -19,6 +32,7 @@ interface SessionOutput {
   full_body_url: string | null;
   generated_look_url: string | null;
   generated_video_url: string | null;
+  body_measurements: BodyMeasurements | null;
 }
 
 type DisplayState = 'idle' | 'capture' | 'capture_done' | 'loading' | 'ready';
@@ -38,6 +52,8 @@ export const OutputDisplay: React.FC = () => {
   const [displayState, setDisplayState] = useState<DisplayState>('idle');
   const [generatedLook, setGeneratedLook] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [measurements, setMeasurements] = useState<BodyMeasurements | null>(null);
+  const [showMeasurements, setShowMeasurements] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [captureSession, setCaptureSession] = useState<{ id: string; token: string } | null>(null);
@@ -47,6 +63,7 @@ export const OutputDisplay: React.FC = () => {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const dismissedSessionIds = useRef<Set<string>>(new Set());
   const captureHandledIds = useRef<Set<string>>(new Set());
+  const videoRequestedIds = useRef<Set<string>>(new Set());
   const LOADING_TIMEOUT_MS = 3 * 60 * 1000;
 
   // ── Fetch active screen setting ───────────────────────────────────────────
@@ -100,6 +117,8 @@ export const OutputDisplay: React.FC = () => {
       setDisplayState('idle');
       setGeneratedLook(null);
       setVideoUrl(null);
+      setMeasurements(null);
+      setShowMeasurements(false);
       setCurrentSessionId(null);
       setCaptureSession(null);
       displayStartTime.current = null;
@@ -161,12 +180,12 @@ export const OutputDisplay: React.FC = () => {
         if ((displayState === 'capture_done' || displayState === 'loading' || displayState === 'ready') && currentSessionId) {
           // Query by generated_look_url (allowed by RLS for anon) — this works once generation completes
           const lookRes = await fetch(
-            `${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${currentSessionId}&generated_look_url=not.is.null&select=id,session_token,registration_status,generated_look_url,generated_video_url`,
+            `${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${currentSessionId}&generated_look_url=not.is.null&select=id,session_token,registration_status,generated_look_url,generated_video_url,body_measurements`,
             { headers }
           );
           const lookData: SessionOutput[] = await lookRes.json();
           if (lookData?.[0]) {
-            const { id, generated_look_url, generated_video_url } = lookData[0];
+            const { id, generated_look_url, generated_video_url, body_measurements } = lookData[0];
             if (dismissedSessionIds.current.has(id)) return;
             const hasNewLook = generated_look_url && generated_look_url !== generatedLook;
             if (hasNewLook && generated_look_url) {
@@ -175,11 +194,29 @@ export const OutputDisplay: React.FC = () => {
               setTimeout(() => {
                 setGeneratedLook(generated_look_url);
                 setVideoUrl(null);
+                setMeasurements(body_measurements ?? null);
+                setShowMeasurements(!!body_measurements);
                 setCurrentSessionId(id);
                 setDisplayState('ready');
                 setCaptureSession(null);
                 setIsTransitioning(false);
               }, 300);
+
+              // Trigger video generation (fire-and-forget from frontend)
+              if (!videoRequestedIds.current.has(id)) {
+                videoRequestedIds.current.add(id);
+                fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
+                  method: 'POST',
+                  headers: { ...headers, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId: id }),
+                }).then(r => console.log(`Video generation triggered: ${r.status}`))
+                  .catch(e => console.error('Video trigger failed:', e));
+              }
+            }
+            // Update measurements if they arrive after initial load
+            if (displayState === 'ready' && body_measurements && !measurements) {
+              setMeasurements(body_measurements);
+              setShowMeasurements(true);
             }
             if (displayState === 'ready' && generated_video_url && generated_video_url !== videoUrl && generatedLook) {
               displayStartTime.current = Date.now();
@@ -285,28 +322,99 @@ export const OutputDisplay: React.FC = () => {
             />
           </div>
         )}
-        <div
-          className="relative overflow-hidden rounded-2xl"
-          style={{ height: '95vh', width: 'calc(95vh * 9 / 16)', boxShadow: '0 40px 120px rgba(0,0,0,0.8)' }}
-        >
-          {videoUrl ? (
-            <video src={videoUrl} autoPlay loop muted playsInline preload="auto"
-              className="absolute inset-0 w-full h-full object-cover" />
-          ) : generatedLook ? (
-            <img src={generatedLook} alt="Your Virtual Look" onError={resetToIdle}
-              className="absolute inset-0 w-full h-full object-cover" />
-          ) : null}
-          <button onClick={resetToIdle}
-            className="absolute top-4 right-4 z-10 p-2 rounded-full bg-background/80 hover:bg-background border border-border/50 shadow-sm transition-all duration-200 hover:scale-105"
-            aria-label="Close">
-            <X className="w-5 h-5 text-muted-foreground" />
-          </button>
-          <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
-            <div className="px-4 py-1.5 rounded-full" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}>
-              <span className="text-xs font-medium text-white/60 tracking-[0.25em] uppercase">Your Virtual Look · Trends</span>
+
+        <div className="relative flex items-center gap-6" style={{ height: '95vh' }}>
+          {/* Main VTO image/video */}
+          <div
+            className="relative overflow-hidden rounded-2xl flex-shrink-0"
+            style={{ height: '95vh', width: 'calc(95vh * 9 / 16)', boxShadow: '0 40px 120px rgba(0,0,0,0.8)' }}
+          >
+            {videoUrl ? (
+              <video src={videoUrl} autoPlay loop muted playsInline preload="auto"
+                className="absolute inset-0 w-full h-full object-cover" />
+            ) : generatedLook ? (
+              <img src={generatedLook} alt="Your Virtual Look" onError={resetToIdle}
+                className="absolute inset-0 w-full h-full object-cover" />
+            ) : null}
+            <button onClick={resetToIdle}
+              className="absolute top-4 right-4 z-10 p-2 rounded-full bg-background/80 hover:bg-background border border-border/50 shadow-sm transition-all duration-200 hover:scale-105"
+              aria-label="Close">
+              <X className="w-5 h-5 text-muted-foreground" />
+            </button>
+            <div className="absolute bottom-6 left-0 right-0 flex justify-center z-10">
+              <div className="px-4 py-1.5 rounded-full" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}>
+                <span className="text-xs font-medium text-white/60 tracking-[0.25em] uppercase">Your Virtual Look · Trends</span>
+              </div>
             </div>
           </div>
+
+          {/* Size Recommendation & Measurements Panel */}
+          {showMeasurements && measurements && (
+            <div
+              className="flex-shrink-0 rounded-2xl overflow-hidden"
+              style={{
+                width: '300px',
+                maxHeight: '95vh',
+                background: 'rgba(15, 15, 20, 0.88)',
+                backdropFilter: 'blur(24px)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+                animation: 'fadeSlideIn 0.6s ease-out forwards',
+              }}
+            >
+              {/* Recommended Size — Hero */}
+              {measurements.recommended_size && (
+                <div className="px-6 pt-8 pb-5 text-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <p className="text-[10px] font-semibold tracking-[0.35em] uppercase text-white/35 mb-3">Suggested Size</p>
+                  <div
+                    className="inline-flex items-center justify-center w-20 h-20 rounded-full mb-3"
+                    style={{
+                      background: 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary)/0.6) 100%)',
+                      boxShadow: '0 8px 32px hsla(var(--primary), 0.25)',
+                    }}
+                  >
+                    <span className="text-3xl font-bold text-white">{measurements.recommended_size}</span>
+                  </div>
+                  {measurements.build && (
+                    <p className="text-xs text-white/40 capitalize">{measurements.build} build</p>
+                  )}
+                </div>
+              )}
+
+              {/* Body Measurements List */}
+              <div className="px-6 py-4">
+                <p className="text-[10px] font-semibold tracking-[0.25em] uppercase text-white/35 mb-3">Body Measurements</p>
+                <div className="space-y-2.5">
+                  {measurements.height_cm != null && <MeasRow label="Height" value={`${measurements.height_cm} cm`} />}
+                  {measurements.shoulder_width_cm != null && <MeasRow label="Shoulders" value={`${measurements.shoulder_width_cm} cm`} />}
+                  {measurements.chest_cm != null && <MeasRow label="Chest" value={`${measurements.chest_cm} cm`} />}
+                  {measurements.waist_cm != null && <MeasRow label="Waist" value={`${measurements.waist_cm} cm`} />}
+                  {measurements.hip_cm != null && <MeasRow label="Hip" value={`${measurements.hip_cm} cm`} />}
+                  {measurements.arm_length_cm != null && <MeasRow label="Arm" value={`${measurements.arm_length_cm} cm`} />}
+                  {measurements.inseam_cm != null && <MeasRow label="Inseam" value={`${measurements.inseam_cm} cm`} />}
+                </div>
+              </div>
+
+              {/* Confidence */}
+              <div className="px-6 pb-5">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${
+                    measurements.confidence === 'high' ? 'bg-emerald-400' :
+                    measurements.confidence === 'medium' ? 'bg-amber-400' : 'bg-orange-400'
+                  }`} />
+                  <span className="text-[10px] text-white/30">AI estimated · {measurements.confidence ?? 'approximate'}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
+
+        <style>{`
+          @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+          }
+        `}</style>
       </div>
     );
   }
@@ -315,5 +423,14 @@ export const OutputDisplay: React.FC = () => {
   const IdleScreen = IDLE_SCREENS[activeScreen] ?? WardrobeWallScreen;
   return <IdleScreen />;
 };
+
+function MeasRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-sm text-white/45">{label}</span>
+      <span className="text-sm font-medium text-white/85 tabular-nums">{value}</span>
+    </div>
+  );
+}
 
 export default OutputDisplay;
