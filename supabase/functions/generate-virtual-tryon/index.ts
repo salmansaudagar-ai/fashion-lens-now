@@ -307,6 +307,61 @@ serve(async (req) => {
       .createSignedUrl(garmentPath, 86400);
     const garmentUrl = garmentSignedData?.signedUrl ?? "";
 
+    // ── Save training data for CatVTON-FLUX fine-tuning ──────
+    // Every successful Gemini generation becomes a training triplet:
+    //   (person, garment, [selfie]) → gemini_result
+    // Stored in vto-images/training-data/ with permanent paths (no signed URLs)
+    try {
+      const ts = Date.now();
+      const trainId = `${session.id}-${ts}`;
+
+      // Upload person image for training
+      const personTrainPath = `training-data/${trainId}-person.jpg`;
+      const personTrainBytes = Uint8Array.from(atob(personRawB64), (c) => c.charCodeAt(0));
+      await supabase.storage.from("vto-images").upload(personTrainPath, personTrainBytes, {
+        contentType: "image/jpeg", upsert: true,
+      });
+
+      // Upload garment image for training
+      const garmentTrainPath = `training-data/${trainId}-garment.jpg`;
+      await supabase.storage.from("vto-images").upload(garmentTrainPath, garmentBytes, {
+        contentType: garmentMime, upsert: true,
+      });
+
+      // Upload result image for training (this is the Gemini output = ground truth)
+      const resultTrainPath = `training-data/${trainId}-result.jpg`;
+      await supabase.storage.from("vto-images").upload(resultTrainPath, bytes, {
+        contentType: "image/jpeg", upsert: true,
+      });
+
+      // Upload selfie if present
+      let selfieTrainPath: string | null = null;
+      if (selfieRawB64) {
+        selfieTrainPath = `training-data/${trainId}-selfie.jpg`;
+        const selfieBytes = Uint8Array.from(atob(selfieRawB64), (c) => c.charCodeAt(0));
+        await supabase.storage.from("vto-images").upload(selfieTrainPath, selfieBytes, {
+          contentType: "image/jpeg", upsert: true,
+        });
+      }
+
+      // Record metadata in vto_training_data table
+      await supabase.from("vto_training_data").insert({
+        session_id: session.id,
+        person_image_path: personTrainPath,
+        garment_image_path: garmentTrainPath,
+        selfie_image_path: selfieTrainPath,
+        result_image_path: resultTrainPath,
+        category,
+        garment_description: garmentDescription,
+        gemini_duration_ms: result.durationMs,
+      });
+
+      console.log(`[VTO] Training data saved: ${trainId}`);
+    } catch (trainErr) {
+      // Non-critical — don't fail the request if training data save fails
+      console.error("[VTO] Training data save failed:", trainErr);
+    }
+
     // Build model comparison data (single model, kept for backward compat with /compare page)
     const modelComparisonData = {
       modelResults: [{
