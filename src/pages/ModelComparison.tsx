@@ -4,8 +4,8 @@ import { Trophy, Clock, AlertCircle, CheckCircle2, Loader2, RefreshCw, RotateCcw
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// The 3 models we always show
-const MODEL_NAMES = ['CatVTON-FLUX', 'IDM-VTON', 'Vertex AI'];
+// The models we always show (4 models including Gemini VTO)
+const MODEL_NAMES = ['CatVTON-FLUX', 'IDM-VTON', 'Vertex AI', 'Gemini VTO'];
 
 interface ModelResult {
   model: string;

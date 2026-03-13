@@ -1,21 +1,22 @@
 /**
  * Multi-Model Virtual Try-On Orchestrator
  *
- * Runs up to 3 VTO models in parallel, then uses Claude as an AI judge
+ * Runs up to 4 VTO models in parallel, then uses Claude as an AI judge
  * to pick the best result.
  *
  * Models:
  *   1. CatVTON-FLUX (Colab) — SOTA FID 5.59, FLUX.1-Fill + LoRA, finetuneable
  *   2. IDM-VTON  (Colab)    — single person + garment, dual-UNet architecture
- *   3. Vertex AI (Google)    — single person + garment, fast cloud API
+ *   3. Vertex AI (Google)    — virtual-try-on-001, fast cloud API
+ *   4. Gemini VTO (Google)   — gemini-2.5-flash-image, prompt-driven, supports 3-image input
  *
  * Input body:
  *   fullBodyImage    — base64 data URL of full-body photo (required)
- *   selfieImage      — base64 data URL of selfie (optional)
+ *   selfieImage      — base64 data URL of selfie (optional, used by Gemini for face accuracy)
  *   outfitImageUrls  — array with one base64 data URL of the garment
  *   category         — "upper_body" | "lower_body" | "dresses"
  *   garmentDescription — text description of garment (optional)
- *   models           — which models to run: ["catvton-flux","idm-vton","vertex-ai"]
+ *   models           — which models to run: ["catvton-flux","idm-vton","vertex-ai","gemini-vto"]
  *                       defaults to all available
  */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -276,6 +277,153 @@ async function runVertexAI(
   }
 }
 
+/** 4. Gemini 2.5 Flash Image — prompt-driven VTO with 3-image support */
+async function runGeminiVTO(
+  personBase64: string,
+  garmentBase64: string,
+  garmentDescription: string,
+  category: string,
+  selfieBase64?: string,
+): Promise<ModelResult> {
+  const start = Date.now();
+  const saJson = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
+  if (!saJson) return { model: "Gemini VTO", imageBase64: null, error: "GCP service account not configured", durationMs: 0 };
+
+  try {
+    // Get access token via JWT (same pattern as runVertexAI)
+    const sa = JSON.parse(saJson);
+    const now = Math.floor(Date.now() / 1000);
+    const encode = (obj: object) =>
+      btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+    const headerB64 = encode({ alg: "RS256", typ: "JWT" });
+    const payloadB64 = encode({
+      iss: sa.client_email,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      aud: "https://oauth2.googleapis.com/token",
+      exp: now + 3600,
+      iat: now,
+    });
+    const signingInput = `${headerB64}.${payloadB64}`;
+
+    const pemKey = sa.private_key
+      .replace(/-----BEGIN PRIVATE KEY-----\n?/, "")
+      .replace(/\n?-----END PRIVATE KEY-----\n?/, "")
+      .replace(/\n/g, "");
+    const keyBytes = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+    const cryptoKey = await crypto.subtle.importKey(
+      "pkcs8", keyBytes, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(signingInput));
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: `${signingInput}.${sigB64}`,
+      }),
+    });
+    if (!tokenRes.ok) throw new Error(`GCP token error: ${await tokenRes.text()}`);
+    const { access_token } = await tokenRes.json();
+
+    // Build prompt based on available images
+    const categoryLabel = category === "upper_body" ? "upper body top/shirt" :
+      category === "lower_body" ? "lower body pants/skirt" : "full dress/outfit";
+
+    let prompt: string;
+    const parts: any[] = [];
+
+    if (selfieBase64) {
+      // 3-image flow: selfie (face) + full-body (body type) + garment
+      prompt = `Virtual try-on task: Generate a photorealistic FULL BODY photo of a person wearing a new garment.
+
+INPUTS:
+- Image 1 (SELFIE): Use this for the person's FACE — exact facial features, skin tone, hair style, glasses, expressions. The face must be identical.
+- Image 2 (FULL BODY): Use this for the person's BODY TYPE — height, proportions, build, posture, stance. The body shape must match.
+- Image 3 (GARMENT): This is the ${categoryLabel} to put on the person. Description: ${garmentDescription || "clothing item"}.
+
+REQUIREMENTS:
+- The output must be a full-body standing photo from head to toe
+- Face from Image 1 must be preserved exactly (no alterations to facial features, skin tone, or hair)
+- Body proportions from Image 2 must be maintained
+- The garment from Image 3 must be accurately rendered with correct colors, patterns, and fit
+- Keep all other clothing items from Image 2 that are not being replaced
+- Professional fashion catalog quality, neutral background, even lighting
+- Output a single photorealistic image`;
+
+      parts.push({ text: prompt });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: selfieBase64 } });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
+    } else {
+      // 2-image flow: full-body + garment
+      prompt = `Virtual try-on task: Generate a photorealistic FULL BODY photo of this person wearing the garment shown.
+
+INPUTS:
+- Image 1 (PERSON): The person to dress. Preserve their face, skin tone, hair, body type, and proportions exactly.
+- Image 2 (GARMENT): The ${categoryLabel} to put on the person. Description: ${garmentDescription || "clothing item"}.
+
+REQUIREMENTS:
+- Output must be a full-body standing photo from head to toe
+- Face and identity must be perfectly preserved (no alterations)
+- The garment must be accurately rendered with correct colors, patterns, and natural fit
+- Keep other clothing items not being replaced
+- Professional fashion catalog quality, neutral background, even lighting
+- Output a single photorealistic image`;
+
+      parts.push({ text: prompt });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
+      parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
+    }
+
+    // Call Gemini 2.5 Flash Image
+    const MODEL = "gemini-2.5-flash-image";
+    const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${MODEL}:generateContent`;
+    console.log(`[Gemini VTO] Calling ${MODEL} with ${selfieBase64 ? "3" : "2"} images`);
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          responseModalities: ["TEXT", "IMAGE"],
+          temperature: 0.4,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Gemini ${res.status}: ${err.substring(0, 300)}`);
+    }
+
+    const data = await res.json();
+    const candidates = data.candidates ?? [];
+    if (candidates.length === 0) throw new Error("No candidates in Gemini response");
+
+    // Extract the generated image from response parts
+    const responseParts = candidates[0]?.content?.parts ?? [];
+    let resultB64: string | null = null;
+    for (const part of responseParts) {
+      if (part.inlineData?.data) {
+        resultB64 = part.inlineData.data;
+        break;
+      }
+    }
+
+    if (!resultB64) throw new Error("No image in Gemini response");
+
+    console.log(`[Gemini VTO] Success in ${Date.now() - start}ms`);
+    return { model: "Gemini VTO", imageBase64: resultB64, durationMs: Date.now() - start };
+  } catch (e) {
+    return { model: "Gemini VTO", imageBase64: null, error: String(e), durationMs: Date.now() - start };
+  }
+}
+
 // ── AI Judge (Claude) ────────────────────────────────────────
 
 async function judgeResults(
@@ -464,9 +612,10 @@ serve(async (req) => {
     ]);
     console.log("[VTO] Images uploaded, URLs ready");
 
-    // Raw base64 for Vertex AI (it uses direct base64, not URLs)
+    // Raw base64 for Vertex AI and Gemini (they use direct base64, not URLs)
     const personRawB64 = stripDataUrlPrefix(fullBodyImage);
     const garmentRawB64 = stripDataUrlPrefix(garmentDataUrl);
+    const selfieRawB64 = selfieImage ? stripDataUrlPrefix(selfieImage) : undefined;
 
     // Determine which models to run based on available Colab URLs / API keys
     const hasCatVtonFlux = !!Deno.env.get("CATVTON_COLAB_URL");
@@ -476,7 +625,7 @@ serve(async (req) => {
     const enabledModels = requestedModels ?? [
       ...(hasCatVtonFlux ? ["catvton-flux"] : []),
       ...(hasIdmVton ? ["idm-vton"] : []),
-      ...(hasGcpKey ? ["vertex-ai"] : []),
+      ...(hasGcpKey ? ["vertex-ai", "gemini-vto"] : []),
     ];
 
     console.log(`[VTO] Running models: ${enabledModels.join(", ")}`);
@@ -501,6 +650,9 @@ serve(async (req) => {
     }
     if (enabledModels.includes("vertex-ai")) {
       modelPromises.push(runVertexAI(personRawB64, garmentRawB64));
+    }
+    if (enabledModels.includes("gemini-vto")) {
+      modelPromises.push(runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, selfieRawB64));
     }
 
     if (modelPromises.length === 0) {
