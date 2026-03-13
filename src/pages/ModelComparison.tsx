@@ -22,6 +22,13 @@ interface Session {
   updated_at: string;
 }
 
+interface PromptRow {
+  key: string;
+  prompt: string;
+  description: string | null;
+  updated_at: string;
+}
+
 interface HealthStatus {
   supabaseApi: boolean;
   edgeFunction: boolean;
@@ -32,7 +39,7 @@ const ModelComparison: React.FC = () => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(0);
-  const [tab, setTab] = useState<'sessions' | 'monitor'>('sessions');
+  const [tab, setTab] = useState<'sessions' | 'prompts' | 'monitor'>('sessions');
   const [health, setHealth] = useState<HealthStatus>({ supabaseApi: false, edgeFunction: false, lastCheck: '' });
   const [logs, setLogs] = useState<string[]>([]);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
@@ -90,16 +97,18 @@ const ModelComparison: React.FC = () => {
           <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.02em', margin: 0 }}>VTO Command Centre</h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {(['sessions', 'monitor'] as const).map(t => (
+          {(['sessions', 'prompts', 'monitor'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer',
               background: tab === t ? 'rgba(255,255,255,0.1)' : 'transparent', color: tab === t ? '#fff' : '#888',
-            }}>{t === 'sessions' ? 'Sessions & Try-Ons' : 'Monitoring'}</button>
+            }}>{t === 'sessions' ? 'Sessions & Try-Ons' : t === 'prompts' ? 'Prompts' : 'Monitoring'}</button>
           ))}
         </div>
       </div>
 
-      {tab === 'sessions' ? (
+      {tab === 'prompts' ? (
+        <PromptsTab />
+      ) : tab === 'sessions' ? (
         <div style={{ padding: 24 }}>
           {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 24 }}>
@@ -197,6 +206,132 @@ const ModelComparison: React.FC = () => {
     </div>
   );
 };
+
+// ─── Prompts Tab ─────────────────────────────────────────────────────────────
+
+function PromptsTab() {
+  const [prompts, setPrompts] = useState<PromptRow[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchPrompts();
+  }, []);
+
+  const fetchPrompts = async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_prompts?select=*&order=key`, { headers: hdrs });
+      if (res.ok) setPrompts(await res.json());
+    } catch {}
+  };
+
+  const startEdit = (p: PromptRow) => {
+    setEditing(p.key);
+    setEditValue(p.prompt);
+    setStatus(null);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setEditValue('');
+    setStatus(null);
+  };
+
+  const savePrompt = async (key: string) => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_prompts?key=eq.${key}`, {
+        method: 'PATCH',
+        headers: { ...hdrs, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ prompt: editValue, updated_at: new Date().toISOString() }),
+      });
+      if (res.ok) {
+        setStatus('Saved! Changes will apply to new generations.');
+        setEditing(null);
+        fetchPrompts();
+      } else {
+        setStatus(`Error saving: ${res.status}`);
+      }
+    } catch (e) {
+      setStatus(`Error: ${e}`);
+    }
+    setSaving(false);
+  };
+
+  const labelMap: Record<string, string> = {
+    vto_3image: 'VTO Image Generation (3-image flow)',
+    vto_2image: 'VTO Image Generation (2-image flow)',
+    video: 'Video Generation (Veo 3 Fast)',
+    measurements: 'Body Measurements Extraction',
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Prompt Management</h2>
+        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Edit prompts used by the VTO pipeline. Changes apply immediately to new generations.</p>
+      </div>
+
+      {status && (
+        <div style={{ marginBottom: 16, padding: '10px 16px', borderRadius: 8, fontSize: 13, background: status.includes('Error') ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: status.includes('Error') ? '#ef4444' : '#22c55e', border: `1px solid ${status.includes('Error') ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)'}` }}>
+          {status}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {prompts.map(p => (
+          <div key={p.key} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{labelMap[p.key] || p.key}</div>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{p.description} — last updated {new Date(p.updated_at).toLocaleString()}</div>
+              </div>
+              {editing !== p.key && (
+                <button onClick={() => startEdit(p)} style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: '#ccc', cursor: 'pointer' }}>
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {editing === p.key ? (
+              <div style={{ padding: 16 }}>
+                <textarea
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  style={{
+                    width: '100%', minHeight: 240, padding: 14, borderRadius: 8, fontSize: 13, lineHeight: 1.6,
+                    fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#e5e5e5', resize: 'vertical', outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+                  <button onClick={cancelEdit} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#888', cursor: 'pointer' }}>
+                    Cancel
+                  </button>
+                  <button onClick={() => savePrompt(p.key)} disabled={saving || editValue === p.prompt} style={{
+                    padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: saving ? 'wait' : 'pointer',
+                    background: editValue === p.prompt ? 'rgba(255,255,255,0.05)' : '#22c55e', color: editValue === p.prompt ? '#666' : '#000',
+                  }}>
+                    {saving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '12px 20px', maxHeight: 180, overflow: 'auto' }}>
+                <pre style={{ fontSize: 12, lineHeight: 1.6, color: '#999', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>
+                  {p.prompt}
+                </pre>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 

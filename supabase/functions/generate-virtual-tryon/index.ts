@@ -88,11 +88,11 @@ async function getGcpAccessToken(saJson: string): Promise<string> {
 async function extractMeasurements(
   personBase64: string,
   accessToken: string,
+  supabase?: any,
 ): Promise<Record<string, any>> {
   const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
 
-  const parts = [
-    { text: `Analyze this full-body photo and estimate the person's body measurements and recommended clothing size.
+  const defaultMeasurePrompt = `Analyze this full-body photo and estimate the person's body measurements and recommended clothing size.
 
 TASK: Provide approximate body measurements based on visual analysis of this full-body standing photo.
 
@@ -110,7 +110,12 @@ OUTPUT FORMAT: Respond with ONLY a JSON object (no markdown, no explanation) wit
   "confidence": "<low|medium|high>"
 }
 
-Important: These are approximate visual estimates. Base them on proportions visible in the photo. If the person appears average height (170cm for men, 160cm for women), use that as a reference point.` },
+Important: These are approximate visual estimates. Base them on proportions visible in the photo. If the person appears average height (170cm for men, 160cm for women), use that as a reference point.`;
+
+  const measurePrompt = supabase ? await fetchPrompt(supabase, "measurements", defaultMeasurePrompt) : defaultMeasurePrompt;
+
+  const parts = [
+    { text: measurePrompt },
     { inlineData: { mimeType: "image/jpeg", data: personBase64 } },
   ];
 
@@ -148,6 +153,18 @@ Important: These are approximate visual estimates. Base them on proportions visi
   }
 }
 
+// ── Fetch dynamic prompts from DB ─────────────────────────────
+
+async function fetchPrompt(supabase: any, key: string, fallback: string): Promise<string> {
+  try {
+    const { data } = await supabase.from("vto_prompts").select("prompt").eq("key", key).single();
+    if (data?.prompt) return data.prompt;
+  } catch (e) {
+    console.warn(`[Prompt] Failed to fetch prompt '${key}', using fallback`);
+  }
+  return fallback;
+}
+
 // ── Gemini VTO ───────────────────────────────────────────────
 
 async function runGeminiVTO(
@@ -157,6 +174,7 @@ async function runGeminiVTO(
   category: string,
   accessToken: string,
   selfieBase64?: string,
+  supabase?: any,
 ): Promise<{ imageBase64: string; durationMs: number }> {
   const start = Date.now();
 
@@ -164,11 +182,13 @@ async function runGeminiVTO(
   const categoryLabel = category === "upper_body" ? "upper body top/shirt" :
     category === "lower_body" ? "lower body pants/skirt" : "full dress/outfit";
 
+  const descSuffix = garmentDescription ? `Description: ${garmentDescription}.` : "";
+
   const parts: any[] = [];
 
   if (selfieBase64) {
     // 3-image flow: selfie (face) + full-body (body type) + garment
-    parts.push({ text: `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
+    const defaultPrompt3 = `You are a professional virtual try-on system. Replace ONLY the {categoryLabel} on the person with the garment shown, producing a photorealistic result.
 
 CRITICAL FACE PRESERVATION RULES:
 - The person's face must be an EXACT pixel-level copy from Image 1. Do NOT regenerate, smooth, stylize, or "enhance" the face in any way.
@@ -181,20 +201,25 @@ CRITICAL FACE PRESERVATION RULES:
 INPUTS:
 - Image 1 (SELFIE): The person's face reference — copy this face EXACTLY as-is.
 - Image 2 (FULL BODY): The person's body — use for body shape, height, posture, stance.
-- Image 3 (GARMENT): The ${categoryLabel} to dress the person in. ${garmentDescription ? `Description: ${garmentDescription}.` : ""}
+- Image 3 (GARMENT): The {categoryLabel} to dress the person in. {garmentDescription}
 
 OUTPUT RULES:
 - Full-body standing photo, head to toe
-- ONLY replace the ${categoryLabel} — keep all other clothing, accessories, shoes unchanged from Image 2
+- ONLY replace the {categoryLabel} — keep all other clothing, accessories, shoes unchanged from Image 2
 - Garment must have correct colors, patterns, fabric texture, logos, and natural draping/fit on this body
 - Natural studio lighting, clean background
-- Output one photorealistic image` });
+- Output one photorealistic image`;
+    const rawPrompt = supabase ? await fetchPrompt(supabase, "vto_3image", defaultPrompt3) : defaultPrompt3;
+    const promptText = rawPrompt
+      .replace(/\{categoryLabel\}/g, categoryLabel)
+      .replace(/\{garmentDescription\}/g, descSuffix);
+    parts.push({ text: promptText });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: selfieBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   } else {
     // 2-image flow: full-body + garment
-    parts.push({ text: `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
+    const defaultPrompt2 = `You are a professional virtual try-on system. Replace ONLY the {categoryLabel} on the person with the garment shown, producing a photorealistic result.
 
 CRITICAL FACE PRESERVATION RULES:
 - The person's face must be an EXACT copy from the input photo. Do NOT regenerate, smooth, stylize, or "enhance" the face.
@@ -205,14 +230,19 @@ CRITICAL FACE PRESERVATION RULES:
 
 INPUTS:
 - Image 1 (PERSON): The person wearing their current clothes. Copy their face and identity EXACTLY.
-- Image 2 (GARMENT): The ${categoryLabel} to dress the person in. ${garmentDescription ? `Description: ${garmentDescription}.` : ""}
+- Image 2 (GARMENT): The {categoryLabel} to dress the person in. {garmentDescription}
 
 OUTPUT RULES:
 - Full-body standing photo, head to toe
-- ONLY replace the ${categoryLabel} — keep all other clothing, accessories, shoes unchanged
+- ONLY replace the {categoryLabel} — keep all other clothing, accessories, shoes unchanged
 - Garment must have correct colors, patterns, fabric texture, and natural draping/fit
 - Natural studio lighting, clean background
-- Output one photorealistic image` });
+- Output one photorealistic image`;
+    const rawPrompt = supabase ? await fetchPrompt(supabase, "vto_2image", defaultPrompt2) : defaultPrompt2;
+    const promptText = rawPrompt
+      .replace(/\{categoryLabel\}/g, categoryLabel)
+      .replace(/\{garmentDescription\}/g, descSuffix);
+    parts.push({ text: promptText });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   }
@@ -355,8 +385,8 @@ serve(async (req) => {
     const accessToken = await getGcpAccessToken(saJson);
 
     // Run Gemini VTO and measurements IN PARALLEL to save time
-    const vtoPromise = runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, accessToken, selfieRawB64);
-    const measurePromise = extractMeasurements(personRawB64, accessToken).catch((e) => {
+    const vtoPromise = runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, accessToken, selfieRawB64, supabase);
+    const measurePromise = extractMeasurements(personRawB64, accessToken, supabase).catch((e) => {
       console.error("[VTO] Measurement extraction failed:", e);
       return {} as Record<string, any>;
     });

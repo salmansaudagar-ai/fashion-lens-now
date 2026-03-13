@@ -134,9 +134,16 @@ serve(async (req) => {
     if (!saJson) throw new Error("GCP service account not configured");
     const accessToken = await getGcpAccessToken(saJson);
 
+    // Fetch video prompt from DB (with fallback)
+    const defaultVideoPrompt = "A fashion model poses subtly with gentle movement, slight turn and sway, professional studio lighting, fashion photography, cinematic quality, smooth slow motion";
+    let prompt = defaultVideoPrompt;
+    try {
+      const { data: promptRow } = await supabase.from("vto_prompts").select("prompt").eq("key", "video").single();
+      if (promptRow?.prompt) prompt = promptRow.prompt;
+    } catch { console.warn("[Video] Failed to fetch prompt from DB, using default"); }
+
     // Start Veo 3 Fast video generation
     const startUrl = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${VEO_MODEL}:predictLongRunning`;
-    const prompt = "A fashion model poses subtly with gentle movement, slight turn and sway, professional studio lighting, fashion photography, cinematic quality, smooth slow motion";
 
     console.log("[Video] Starting Veo 3 Fast generation...");
     const startRes = await fetch(startUrl, {
