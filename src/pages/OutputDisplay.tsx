@@ -206,15 +206,15 @@ export const OutputDisplay: React.FC = () => {
               setIsTransitioning(false);
             }, 300);
 
-            // Trigger video generation (fire-and-forget)
-            if (!videoRequestedIds.current.has(id)) {
-              videoRequestedIds.current.add(id);
-              fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
-                method: 'POST',
-                headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: id }),
-              }).catch(e => console.error('Video trigger failed:', e));
-            }
+            // Always re-trigger video for a new look (even same session with new outfit)
+            // Remove old entry so the new look gets its own video
+            videoRequestedIds.current.delete(id);
+            videoRequestedIds.current.add(id);
+            fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
+              method: 'POST',
+              headers: { ...headers, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: id }),
+            }).catch(e => console.error('Video trigger failed:', e));
             return;
           }
 

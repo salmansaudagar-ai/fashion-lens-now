@@ -254,46 +254,71 @@ OUTPUT RULES:
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   }
 
-  // Call Gemini 2.5 Flash Image
+  // Call Gemini 2.5 Flash Image (with retry on "no image" failures)
   const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
-  console.log(`[Gemini VTO] Calling ${GEMINI_MODEL} with ${selfieBase64 ? "3" : "2"} images`);
+  const MAX_RETRIES = 2;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        responseModalities: ["TEXT", "IMAGE"],
-        temperature: 0.2,
-      },
-    }),
-  });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const temperature = attempt === 0 ? 0.2 : 0.4 + attempt * 0.1;
+    console.log(`[Gemini VTO] Attempt ${attempt + 1}/${MAX_RETRIES + 1} — ${GEMINI_MODEL}, ${selfieBase64 ? "3" : "2"} images, temp=${temperature}`);
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Gemini ${res.status}: ${err.substring(0, 300)}`);
-  }
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          responseModalities: ["TEXT", "IMAGE"],
+          temperature,
+        },
+      }),
+    });
 
-  const data = await res.json();
-  const candidates = data.candidates ?? [];
-  if (candidates.length === 0) throw new Error("No candidates in Gemini response");
-
-  // Extract the generated image from response parts
-  const responseParts = candidates[0]?.content?.parts ?? [];
-  let resultB64: string | null = null;
-  for (const part of responseParts) {
-    if (part.inlineData?.data) {
-      resultB64 = part.inlineData.data;
-      break;
+    if (!res.ok) {
+      const err = await res.text();
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[Gemini VTO] Attempt ${attempt + 1} failed (${res.status}), retrying in 2s...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      throw new Error(`Gemini ${res.status}: ${err.substring(0, 300)}`);
     }
+
+    const data = await res.json();
+    const candidates = data.candidates ?? [];
+    if (candidates.length === 0) {
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[Gemini VTO] Attempt ${attempt + 1}: no candidates, retrying...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      throw new Error("No candidates in Gemini response after retries");
+    }
+
+    const responseParts = candidates[0]?.content?.parts ?? [];
+    let resultB64: string | null = null;
+    for (const part of responseParts) {
+      if (part.inlineData?.data) {
+        resultB64 = part.inlineData.data;
+        break;
+      }
+    }
+
+    if (!resultB64) {
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[Gemini VTO] Attempt ${attempt + 1}: no image in response, retrying...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      throw new Error("No image in Gemini response after retries");
+    }
+
+    const durationMs = Date.now() - start;
+    console.log(`[Gemini VTO] Success in ${durationMs}ms (attempt ${attempt + 1})`);
+    return { imageBase64: resultB64, durationMs };
   }
 
-  if (!resultB64) throw new Error("No image in Gemini response");
-
-  const durationMs = Date.now() - start;
-  console.log(`[Gemini VTO] Success in ${durationMs}ms`);
-  return { imageBase64: resultB64, durationMs };
+  throw new Error("Gemini VTO failed after all retries");
 }
 
 // ── Main handler ─────────────────────────────────────────────

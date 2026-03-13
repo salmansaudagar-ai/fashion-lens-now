@@ -278,6 +278,10 @@ export const VirtualLookStep: React.FC = () => {
 
   const handleChangeOutfit = () => {
     setGeneratedLook(null);
+    setHasAutoTriggeredVideo(false); // Reset so new outfit gets its own video
+    setVideoUrl(null);
+    setIsGeneratingVideo(false);
+    setShowTabs(false);
     setCurrentStep(3);
   };
 
