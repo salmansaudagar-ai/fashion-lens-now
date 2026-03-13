@@ -163,7 +163,7 @@ const AutoConfirmOverlay: React.FC<{
   return (
     <div className="fixed inset-0 bg-background flex flex-col animate-fade-in">
       <div className="flex-1 relative">
-        <img src={photo} alt="Captured selfie" className="w-full h-full object-contain" />
+        <img src={photo} alt="Captured selfie" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/80" />
         <div className="absolute top-8 left-0 right-0 text-center">
           <h2 className="text-2xl font-display font-semibold text-white drop-shadow-lg">

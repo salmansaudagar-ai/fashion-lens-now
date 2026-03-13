@@ -155,13 +155,10 @@ async function runGeminiVTO(
   garmentBase64: string,
   garmentDescription: string,
   category: string,
+  accessToken: string,
   selfieBase64?: string,
 ): Promise<{ imageBase64: string; durationMs: number }> {
   const start = Date.now();
-  const saJson = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
-  if (!saJson) throw new Error("GCP service account not configured");
-
-  const accessToken = await getGcpAccessToken(saJson);
 
   // Build prompt based on available images
   const categoryLabel = category === "upper_body" ? "upper body top/shirt" :
@@ -171,39 +168,51 @@ async function runGeminiVTO(
 
   if (selfieBase64) {
     // 3-image flow: selfie (face) + full-body (body type) + garment
-    parts.push({ text: `Virtual try-on task: Generate a photorealistic FULL BODY photo of a person wearing a new garment.
+    parts.push({ text: `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
+
+CRITICAL FACE PRESERVATION RULES:
+- The person's face must be an EXACT pixel-level copy from Image 1. Do NOT regenerate, smooth, stylize, or "enhance" the face in any way.
+- Preserve every facial detail: skin texture, pores, blemishes, moles, wrinkles, facial hair, exact eye shape and color, nose shape, lip shape and color, eyebrow shape.
+- Preserve exact skin tone — do NOT lighten, darken, or change the hue of the skin.
+- Preserve exact hair: style, color, texture, flyaways. Do NOT restyle, smooth, or change hair.
+- If the person wears glasses, preserve them exactly.
+- The face should look like an untouched photograph, NOT like a rendered/AI image.
 
 INPUTS:
-- Image 1 (SELFIE): Use this for the person's FACE — exact facial features, skin tone, hair style, glasses, expressions. The face must be identical.
-- Image 2 (FULL BODY): Use this for the person's BODY TYPE — height, proportions, build, posture, stance. The body shape must match.
-- Image 3 (GARMENT): This is the ${categoryLabel} to put on the person. Description: ${garmentDescription || "clothing item"}.
+- Image 1 (SELFIE): The person's face reference — copy this face EXACTLY as-is.
+- Image 2 (FULL BODY): The person's body — use for body shape, height, posture, stance.
+- Image 3 (GARMENT): The ${categoryLabel} to dress the person in. ${garmentDescription ? `Description: ${garmentDescription}.` : ""}
 
-REQUIREMENTS:
-- The output must be a full-body standing photo from head to toe
-- Face from Image 1 must be preserved exactly (no alterations to facial features, skin tone, or hair)
-- Body proportions from Image 2 must be maintained
-- The garment from Image 3 must be accurately rendered with correct colors, patterns, and fit
-- Keep all other clothing items from Image 2 that are not being replaced
-- Professional fashion catalog quality, neutral background, even lighting
-- Output a single photorealistic image` });
+OUTPUT RULES:
+- Full-body standing photo, head to toe
+- ONLY replace the ${categoryLabel} — keep all other clothing, accessories, shoes unchanged from Image 2
+- Garment must have correct colors, patterns, fabric texture, logos, and natural draping/fit on this body
+- Natural studio lighting, clean background
+- Output one photorealistic image` });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: selfieBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   } else {
     // 2-image flow: full-body + garment
-    parts.push({ text: `Virtual try-on task: Generate a photorealistic FULL BODY photo of this person wearing the garment shown.
+    parts.push({ text: `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
+
+CRITICAL FACE PRESERVATION RULES:
+- The person's face must be an EXACT copy from the input photo. Do NOT regenerate, smooth, stylize, or "enhance" the face.
+- Preserve every facial detail: skin texture, pores, blemishes, moles, wrinkles, facial hair, exact eye shape and color.
+- Preserve exact skin tone — do NOT lighten, darken, or change skin color.
+- Preserve exact hair: style, color, texture. Do NOT restyle or smooth hair.
+- The face should look like an untouched photograph, NOT an AI rendering.
 
 INPUTS:
-- Image 1 (PERSON): The person to dress. Preserve their face, skin tone, hair, body type, and proportions exactly.
-- Image 2 (GARMENT): The ${categoryLabel} to put on the person. Description: ${garmentDescription || "clothing item"}.
+- Image 1 (PERSON): The person wearing their current clothes. Copy their face and identity EXACTLY.
+- Image 2 (GARMENT): The ${categoryLabel} to dress the person in. ${garmentDescription ? `Description: ${garmentDescription}.` : ""}
 
-REQUIREMENTS:
-- Output must be a full-body standing photo from head to toe
-- Face and identity must be perfectly preserved (no alterations)
-- The garment must be accurately rendered with correct colors, patterns, and natural fit
-- Keep other clothing items not being replaced
-- Professional fashion catalog quality, neutral background, even lighting
-- Output a single photorealistic image` });
+OUTPUT RULES:
+- Full-body standing photo, head to toe
+- ONLY replace the ${categoryLabel} — keep all other clothing, accessories, shoes unchanged
+- Garment must have correct colors, patterns, fabric texture, and natural draping/fit
+- Natural studio lighting, clean background
+- Output one photorealistic image` });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   }
@@ -219,7 +228,7 @@ REQUIREMENTS:
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseModalities: ["TEXT", "IMAGE"],
-        temperature: 0.4,
+        temperature: 0.2,
       },
     }),
   });
@@ -340,20 +349,19 @@ serve(async (req) => {
     const garmentRawB64 = stripDataUrlPrefix(garmentDataUrl);
     const selfieRawB64 = selfieImage ? stripDataUrlPrefix(selfieImage) : undefined;
 
-    // Run Gemini VTO
-    const result = await runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, selfieRawB64);
+    // Get GCP access token ONCE and reuse for both VTO and measurements
+    const saJson = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
+    if (!saJson) throw new Error("GCP service account not configured");
+    const accessToken = await getGcpAccessToken(saJson);
 
-    // ── Extract body measurements (parallel-safe, non-blocking) ──
-    let measurements: Record<string, any> = {};
-    try {
-      const saJsonForMeasure = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
-      if (saJsonForMeasure) {
-        const measureToken = await getGcpAccessToken(saJsonForMeasure);
-        measurements = await extractMeasurements(personRawB64, measureToken);
-      }
-    } catch (measureErr) {
-      console.error("[VTO] Measurement extraction failed:", measureErr);
-    }
+    // Run Gemini VTO and measurements IN PARALLEL to save time
+    const vtoPromise = runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, accessToken, selfieRawB64);
+    const measurePromise = extractMeasurements(personRawB64, accessToken).catch((e) => {
+      console.error("[VTO] Measurement extraction failed:", e);
+      return {} as Record<string, any>;
+    });
+
+    const [result, measurements] = await Promise.all([vtoPromise, measurePromise]);
 
     // Upload generated image to storage
     const bytes = Uint8Array.from(atob(result.imageBase64), (c) => c.charCodeAt(0));
