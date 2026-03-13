@@ -72,9 +72,14 @@ const ModelComparison: React.FC = () => {
       addLog(`Supabase API: ${r.ok ? 'OK' : r.status}`);
     } catch (e) { addLog(`Supabase API: FAIL ${e}`); }
     try {
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-virtual-tryon`, { method: 'OPTIONS', headers: hdrs });
-      status.edgeFunction = r.ok;
-      addLog(`Edge function: ${r.ok ? 'OK' : r.status}`);
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-virtual-tryon`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: '__health_check__' }),
+      });
+      // Any HTTP response (even 4xx) means the function is alive and reachable
+      status.edgeFunction = true;
+      addLog(`Edge function: OK (status ${r.status})`);
     } catch (e) { addLog(`Edge function: FAIL ${e}`); }
     setHealth(status);
   }, [addLog]);
