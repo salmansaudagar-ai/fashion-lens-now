@@ -1598,8 +1598,8 @@ function MonitorSection({ health, runHealthCheck, logs, addLog }: { health: Heal
 // ═══════════════════════════════════════════════════════════════
 // ██ SHARED COMPONENTS
 // ═══════════════════════════════════════════════════════════════
-function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`bg-white border border-slate-200 rounded-xl shadow-sm ${className}`}>{children}</div>;
+function Card({ children, className = '', ...rest }: React.HTMLAttributes<HTMLDivElement> & { children: React.ReactNode }) {
+  return <div className={`bg-white border border-slate-200 rounded-xl shadow-sm ${className}`} {...rest}>{children}</div>;
 }
 
 function Delta({ value, label }: { value: number; label: string }) {
