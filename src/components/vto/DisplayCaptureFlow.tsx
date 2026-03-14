@@ -234,23 +234,10 @@ async function uploadImageToStorage(base64: string, sessionToken: string, type: 
   }
   console.log(`[DisplayCapture] Upload succeeded, getting signed URL...`);
 
-  const signedRes = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/vto-images/${filename}`, {
-    method: 'POST',
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ expiresIn: 86400 }),
-  });
-  if (!signedRes.ok) {
-    const errText = await signedRes.text().catch(() => '');
-    console.error(`[DisplayCapture] Sign URL failed: ${signedRes.status} ${signedRes.statusText}`, errText);
-    return null;
-  }
-  const signedData = await signedRes.json();
-  console.log(`[DisplayCapture] Signed URL obtained successfully`);
-  return `${SUPABASE_URL}/storage/v1${signedData.signedURL}`;
+  // Use public URL (bucket is public — no expiration)
+  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/vto-images/${filename}`;
+  console.log(`[DisplayCapture] Public URL:`, publicUrl);
+  return publicUrl;
 }
 
 async function updateSessionField(sessionToken: string, updates: Record<string, string | null>): Promise<boolean> {
@@ -290,7 +277,7 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
   const capturedRef = useRef(false);
 
   const isFullbody = true; // always full body on /display
-  const facingMode = 'environment' as const; // always rear camera on /display
+  const [actualFacing, setActualFacing] = useState<'user' | 'environment'>('environment');
   const isCamera = mode === 'camera';
 
   const startCamera = useCallback(async () => {
@@ -305,6 +292,7 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
         audio: false,
       });
       streamRef.current = stream;
+      setActualFacing('environment');
       if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
       setIsLoading(false);
     } catch {
@@ -315,6 +303,11 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
           audio: false,
         });
         streamRef.current = stream;
+        // Check if fallback gave us a front-facing camera
+        const track = stream.getVideoTracks()[0];
+        const settings = track?.getSettings?.();
+        const isFront = settings?.facingMode === 'user';
+        setActualFacing(isFront ? 'user' : 'environment');
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
         setIsLoading(false);
       } catch (err) {
@@ -357,7 +350,8 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // No mirroring — always environment/rear camera on display
+      // Mirror if using front-facing camera (fallback scenario)
+      if (actualFacing === 'user') { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
       ctx.drawImage(video, 0, 0);
       // Use JPEG at 92% quality for much smaller file sizes (vs PNG)
       setCapturedPhoto(canvas.toDataURL('image/jpeg', 0.92));
@@ -458,7 +452,8 @@ export const DisplayCaptureFlow: React.FC<DisplayCaptureFlowProps> = ({ sessionI
         <div className="flex-1 relative overflow-hidden">
           <video ref={videoRef} autoPlay playsInline muted
             className={cn('w-full h-full object-cover transition-opacity duration-300',
-              isLoading ? 'opacity-0' : 'opacity-100')} />
+              isLoading ? 'opacity-0' : 'opacity-100',
+              actualFacing === 'user' && 'scale-x-[-1]')} />
           <canvas ref={canvasRef} className="hidden" />
 
           {isLoading && (

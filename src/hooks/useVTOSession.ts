@@ -66,10 +66,10 @@ const uploadImage = async (base64: string, sessionToken: string, type: 'selfie' 
 };
 
 // Create a new anonymous VTO session and return both id and token
-export const createVTOSession = async (): Promise<{ id: string; sessionToken: string } | null> => {
+export const createVTOSession = async (kioskId?: string | null): Promise<{ id: string; sessionToken: string } | null> => {
   try {
     const { data, error } = await supabase.functions.invoke('create-session', {
-      body: {},
+      body: kioskId ? { kiosk_id: kioskId } : {},
     });
 
     if (error) {

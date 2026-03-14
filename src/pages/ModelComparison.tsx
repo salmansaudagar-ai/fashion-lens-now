@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const FUNCTION_BASE = `${SUPABASE_URL}/functions/v1`;
 const hdrs = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
+const PIN_SESSION_KEY = 'trends_admin_pin';
 
 /** Convert expired signed URLs to public URLs (bucket is now public) */
 const toPublicUrl = (url: string | null): string | null => {
@@ -47,6 +49,67 @@ const COST = {
   avgImageMB: 0.4,
   avgVideoMB: 3.0,
 };
+
+// ── PIN Gate wrapper ──────────────────────────────────────────
+function PinGate({ children }: { children: React.ReactNode }) {
+  const [pin, setPin] = useState<string | null>(() => sessionStorage.getItem(PIN_SESSION_KEY));
+  const [input, setInput] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleLogin = async () => {
+    if (!input.trim()) return;
+    setChecking(true);
+    setError('');
+    try {
+      const res = await fetch(`${FUNCTION_BASE}/validate-admin-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ pin: input.trim() }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        sessionStorage.setItem(PIN_SESSION_KEY, input.trim());
+        setPin(input.trim());
+      } else {
+        setError('Incorrect PIN');
+        setInput('');
+      }
+    } catch {
+      setError('Validation failed');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  if (pin) return <>{children}</>;
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ textAlign: 'center', maxWidth: 340 }}>
+        <div style={{ fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 8 }}>Command Centre</div>
+        <div style={{ color: '#888', fontSize: 14, marginBottom: 24 }}>Enter admin PIN to continue</div>
+        <input
+          type="password"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleLogin()}
+          placeholder="PIN"
+          autoFocus
+          style={{ width: '100%', padding: '12px 16px', borderRadius: 8, border: '1px solid #333', background: '#111', color: '#fff', fontSize: 18, textAlign: 'center', letterSpacing: '0.3em', marginBottom: 12 }}
+        />
+        {error && <div style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>{error}</div>}
+        <button
+          onClick={handleLogin}
+          disabled={checking || !input.trim()}
+          style={{ width: '100%', padding: '10px 0', borderRadius: 8, background: checking ? '#333' : '#c8a97e', color: '#000', fontWeight: 600, fontSize: 15, border: 'none', cursor: checking ? 'wait' : 'pointer' }}
+        >
+          {checking ? 'Verifying…' : 'Unlock'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const ModelComparison: React.FC = () => {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -197,7 +260,7 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
   useEffect(() => {
     if (view !== 'generations') return;
     setGenLoading(true);
-    fetch(`${SUPABASE_URL}/rest/v1/vto_generations?order=created_at.desc&limit=50&select=id,session_id,garment_url,garment_description,category,generated_look_url,generated_video_url,body_measurements,duration_ms,created_at`, { headers: hdrs })
+    fetch(`${SUPABASE_URL}/rest/v1/vto_generations?order=created_at.desc&limit=200&select=id,session_id,garment_url,garment_description,category,generated_look_url,generated_video_url,body_measurements,duration_ms,created_at`, { headers: hdrs })
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setGenerations(data); })
       .catch(() => {})
@@ -1296,4 +1359,8 @@ const btn: React.CSSProperties = { padding: '6px 14px', borderRadius: 8, fontSiz
 const cardStyle: React.CSSProperties = { background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', padding: '16px 20px' };
 const labelStyle: React.CSSProperties = { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 };
 
-export default ModelComparison;
+const ModelComparisonWithAuth: React.FC = () => (
+  <PinGate><ModelComparison /></PinGate>
+);
+
+export default ModelComparisonWithAuth;

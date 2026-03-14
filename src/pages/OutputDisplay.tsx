@@ -195,8 +195,8 @@ export const OutputDisplay: React.FC = () => {
                 return;
               }
 
-              // Browsing: has full body photo, registered, no generated look yet
-              if (row.full_body_url && row.registration_status === 'registered' && !row.generated_look_url) {
+              // Browsing: has full body photo, registered/pending, no generated look yet
+              if (row.full_body_url && (row.registration_status === 'registered' || row.registration_status === 'pending') && !row.generated_look_url) {
                 setCurrentSessionId(row.id);
                 setBrowsingFullBody(row.full_body_url);
                 setBrowsingGarment(row.garment_url || null);
@@ -340,7 +340,7 @@ export const OutputDisplay: React.FC = () => {
               animation: 'fadeSlideIn 0.8s ease-out forwards',
             }}
           >
-            <img src={browsingFullBody} alt="Your photo" className="absolute inset-0 w-full h-full object-cover" />
+            <img src={browsingFullBody} alt="Your photo" className="absolute inset-0 w-full h-full object-contain bg-black/50" />
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent p-8">
               <p className="text-white/50 text-sm font-medium tracking-widest uppercase">Your Photo</p>
             </div>
@@ -358,7 +358,7 @@ export const OutputDisplay: React.FC = () => {
                   border: '1px solid rgba(255,255,255,0.08)',
                 }}
               >
-                <img src={browsingGarment} alt="Selected garment" className="w-full h-full object-cover" />
+                <img src={browsingGarment} alt="Selected garment" className="w-full h-full object-contain bg-black/30" />
               </div>
             ) : (
               <div

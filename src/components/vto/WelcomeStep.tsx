@@ -17,7 +17,8 @@ export const WelcomeStep: React.FC = () => {
     sessionStorage.removeItem('vto_session_id');
     sessionStorage.removeItem('vto_session_token');
 
-    const result = await createVTOSession();
+    const kioskId = localStorage.getItem('trends_kiosk_id');
+    const result = await createVTOSession(kioskId);
     if (!result) {
       toast.error('Failed to start session. Please try again.');
       return null;

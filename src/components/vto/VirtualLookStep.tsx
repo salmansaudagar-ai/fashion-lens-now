@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useVTO } from '@/contexts/VTOContext';
-import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy, Plus, ShoppingBag, X, ThumbsUp, ThumbsDown, Minus } from 'lucide-react';
+import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy, Plus, ShoppingBag, X, ThumbsUp, ThumbsDown, Minus, Star } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { extractBodyMeasurements, BodyMeasurements } from '@/hooks/useBodyMeasurements';
 import { OutfitCategory } from '@/types/vto';
+import { useCatalog } from '@/hooks/useCatalog';
 
 interface ModelResultInfo {
   model: string;
@@ -20,9 +21,10 @@ interface ModelResultInfo {
 }
 
 export const VirtualLookStep: React.FC = () => {
-  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId, clearOutfitCategory, setExcludedCategory, serverMeasurements } = useVTO();
+  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId, clearOutfitCategory, setExcludedCategory, serverMeasurements, selectOutfitItem } = useVTO();
   const navigate = useNavigate();
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const { data: catalogItems } = useCatalog();
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [showTabs, setShowTabs] = useState(false);
   const [activeTab, setActiveTab] = useState<'image' | 'video'>('video');
@@ -805,6 +807,47 @@ export const VirtualLookStep: React.FC = () => {
                 })}
               </div>
             </div>
+
+            {/* Recommended Products */}
+            {catalogItems && catalogItems.length > 0 && (() => {
+              // Show items from categories NOT currently selected
+              const selectedIds = new Set(
+                [selectedOutfit.topwear?.id, selectedOutfit.bottomwear?.id, selectedOutfit.footwear?.id].filter(Boolean)
+              );
+              const recs = catalogItems
+                .filter(item => !selectedIds.has(item.id))
+                .slice(0, 6);
+              if (recs.length === 0) return null;
+              return (
+                <div className="glass-card rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Star className="w-4 h-4 text-primary" />
+                    <h3 className="text-sm font-semibold text-foreground">Recommended For You</h3>
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollSnapType: 'x mandatory' }}>
+                    {recs.map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          selectOutfitItem(item);
+                          toast.success(`Added ${item.name}`);
+                        }}
+                        className="flex-shrink-0 w-28 rounded-xl overflow-hidden bg-secondary/50 hover:bg-secondary/80 transition-colors text-left"
+                        style={{ scrollSnapAlign: 'start' }}
+                      >
+                        <img src={item.imageUrl} alt={item.name} className="w-full h-32 object-cover" />
+                        <div className="p-2">
+                          <p className="text-[11px] font-medium text-foreground truncate">{item.name}</p>
+                          {item.sellingPrice && (
+                            <p className="text-[10px] text-primary font-semibold">₹{item.sellingPrice.toLocaleString('en-IN')}</p>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Checkout & Actions */}
             <div className="space-y-3">
