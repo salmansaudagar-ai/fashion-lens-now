@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import {
   LayoutDashboard, Shirt, BarChart3, FolderOpen, Sparkles, Star,
@@ -1089,9 +1090,9 @@ function CatalogTabInline() {
         </div>
       )}
 
-      {/* ── Product Detail Modal ── */}
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setSelectedItem(null)}>
+      {/* ── Product Detail Modal (portal to body) ── */}
+      {selectedItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }} onClick={() => setSelectedItem(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-[900px] max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/80">
@@ -1224,7 +1225,8 @@ function CatalogTabInline() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
