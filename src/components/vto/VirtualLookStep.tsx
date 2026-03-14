@@ -166,24 +166,22 @@ export const VirtualLookStep: React.FC = () => {
       setShowTabs(true);
       setActiveTab('video');
       
-      // Call n8n webhook
-      fetch('https://geekblooded1996.app.n8n.cloud/webhook/trends-tryon', {
+      // Call generate-video edge function directly (fire-and-forget, frontend polls for result)
+      fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-video`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        mode: 'no-cors',
-        body: JSON.stringify({
-          id: sessionId,
-          generated_look_url: generatedLook,
-        }),
+        body: JSON.stringify({ sessionId }),
       })
         .then(() => {
           toast.success('360 video generation started! Please wait...');
-          console.log('Video generation webhook auto-triggered for session:', sessionId);
+          console.log('Video generation triggered for session:', sessionId);
         })
         .catch((error) => {
-          console.error('Auto video generation error:', error);
+          console.error('Video generation error:', error);
           toast.error('Failed to trigger video generation.');
           setIsGeneratingVideo(false);
         });
@@ -369,24 +367,19 @@ export const VirtualLookStep: React.FC = () => {
     setActiveTab('video');
     
     try {
-      // Call n8n webhook with session id and generated look URL
-      const response = await fetch(
-        'https://geekblooded1996.app.n8n.cloud/webhook/trends-tryon',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          mode: 'no-cors',
-          body: JSON.stringify({
-            id: sessionId,
-            generated_look_url: generatedLook,
-          }),
-        }
-      );
+      // Call generate-video edge function directly
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ sessionId }),
+      });
 
       toast.success('360 video generation started! Please wait...');
-      console.log('Video generation webhook triggered for session:', sessionId);
+      console.log('Video generation triggered for session:', sessionId);
     } catch (error) {
       console.error('Video generation error:', error);
       toast.error('Failed to trigger video generation. Please try again.');

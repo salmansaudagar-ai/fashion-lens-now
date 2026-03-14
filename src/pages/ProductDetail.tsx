@@ -95,24 +95,22 @@ const ProductDetail: React.FC = () => {
 
   const selfiePreview = sessionStorage.getItem('vto_selfie_preview');
 
-  // Auto-trigger n8n video webhook 2s after image generation completes
+  // Auto-trigger video generation via edge function 2s after image generation completes
   useEffect(() => {
     if (generationState === 'done' && generatedImageUrl && !videoTriggered) {
       const sessionId = sessionStorage.getItem('vto_session_id');
-      videoTimerRef.current = setTimeout(async () => {
+      videoTimerRef.current = setTimeout(() => {
         setVideoTriggered(true);
-        try {
-          await fetch('https://geekblooded1996.app.n8n.cloud/webhook/trends-tryon', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId,
-              generatedLookUrl: generatedImageUrl,
-            }),
-          });
-        } catch (err) {
-          console.error('[VTO] n8n webhook error:', err);
-        }
+        // Fire-and-forget: edge function runs server-side, frontend polls for result
+        fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-video`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: JSON.stringify({ sessionId }),
+        }).catch(err => console.error('[VTO] Video generation error:', err));
       }, 2000);
     }
     return () => {
