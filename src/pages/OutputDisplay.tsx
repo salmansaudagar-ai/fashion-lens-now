@@ -65,8 +65,10 @@ export const OutputDisplay: React.FC = () => {
   const loadingStartTime = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const dismissedSessionIds = useRef<Set<string>>(new Set());
+  const dismissedGenIds = useRef<Set<string>>(new Set());
   const captureHandledIds = useRef<Set<string>>(new Set());
   const videoRequestedIds = useRef<Set<string>>(new Set());
+  const lastShownLookUrl = useRef<string | null>(null);
   const LOADING_TIMEOUT_MS = 3 * 60 * 1000;
 
   // ── Fetch active screen setting ───────────────────────────────────────────
@@ -127,6 +129,7 @@ export const OutputDisplay: React.FC = () => {
       setBrowsingFullBody(null);
       setBrowsingGarment(null);
       displayStartTime.current = null;
+      // Don't reset lastShownLookUrl — prevents re-showing the same look after dismiss
       setIsTransitioning(false);
     }, 300);
   };
@@ -203,6 +206,37 @@ export const OutputDisplay: React.FC = () => {
                 if (displayState !== 'browsing') setDisplayState('browsing');
                 return;
               }
+
+              // Completed look: session already has a generated look that we haven't shown yet
+              // This catches the case where the display was idle and missed the brief "generating" window
+              if (row.generated_look_url && row.generated_look_url !== lastShownLookUrl.current) {
+                console.log(`[Display] Detected completed look for session ${row.id.substring(0, 8)} while idle`);
+                lastShownLookUrl.current = row.generated_look_url;
+                displayStartTime.current = Date.now();
+                setIsTransitioning(true);
+                setCurrentSessionId(row.id);
+                setTimeout(() => {
+                  setGeneratedLook(row.generated_look_url);
+                  setVideoUrl(row.generated_video_url ?? null);
+                  setMeasurements(null);
+                  setShowMeasurements(false);
+                  setBrowsingFullBody(null);
+                  setBrowsingGarment(null);
+                  setDisplayState('ready');
+                  setIsTransitioning(false);
+                }, 300);
+
+                // Trigger video if not already done
+                if (!videoRequestedIds.current.has(row.id)) {
+                  videoRequestedIds.current.add(row.id);
+                  fetch(`${SUPABASE_URL}/functions/v1/generate-video`, {
+                    method: 'POST',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: row.id }),
+                  }).catch(e => console.error('Video trigger failed:', e));
+                }
+                return;
+              }
             }
 
             // No browsing session found — go back to idle if we were browsing
@@ -212,6 +246,40 @@ export const OutputDisplay: React.FC = () => {
               setDisplayState('idle');
             }
           }
+        }
+
+        // ── IDLE: also poll vto_generations for any new look we might have missed ──
+        if (displayState === 'idle') {
+          const cutoff5m = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+          try {
+            const genRes = await fetch(
+              `${SUPABASE_URL}/rest/v1/vto_generations?created_at=gte.${cutoff5m}&order=created_at.desc&limit=1&select=id,session_id,generated_look_url,generated_video_url,body_measurements`,
+              { headers }
+            );
+            if (genRes.ok) {
+              const gens = await genRes.json();
+              if (gens.length > 0) {
+                const gen = gens[0];
+                if (gen.generated_look_url && !dismissedGenIds.current.has(gen.id) && gen.generated_look_url !== lastShownLookUrl.current) {
+                  console.log(`[Display] Found new generation ${gen.id.substring(0, 8)} via vto_generations poll`);
+                  dismissedGenIds.current.add(gen.id);
+                  lastShownLookUrl.current = gen.generated_look_url;
+                  displayStartTime.current = Date.now();
+                  setIsTransitioning(true);
+                  setCurrentSessionId(gen.session_id);
+                  setTimeout(() => {
+                    setGeneratedLook(gen.generated_look_url);
+                    setVideoUrl(gen.generated_video_url ?? null);
+                    setMeasurements(gen.body_measurements ?? null);
+                    setShowMeasurements(!!gen.body_measurements);
+                    setDisplayState('ready');
+                    setIsTransitioning(false);
+                  }, 300);
+                  return;
+                }
+              }
+            }
+          } catch { /* ignore */ }
         }
 
         // ── LOADING/READY: poll only current session ──

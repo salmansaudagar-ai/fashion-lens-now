@@ -227,7 +227,7 @@ const ModelComparison: React.FC = () => {
         <SessionsTab
           sessions={sessions} totalCount={totalCount} page={page} setPage={setPage}
           stats={stats} selectedSession={selectedSession} setSelectedSession={setSelectedSession}
-          allSessions={allSessions}
+          allSessions={allSessions} onRefresh={() => { fetchSessions(); fetchAllSessions(); }}
         />
       )}
       {tab === 'analytics' && <AnalyticsTab allSessions={allSessions} />}
@@ -245,16 +245,59 @@ const ModelComparison: React.FC = () => {
 
 // ─── Sessions Tab ────────────────────────────────────────────────────────────
 
-function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSession, setSelectedSession, allSessions }: {
+function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSession, setSelectedSession, allSessions, onRefresh }: {
   sessions: Session[]; totalCount: number; page: number; setPage: (fn: (p: number) => number) => void;
   stats: { totalGenerations: number; withLooks: number; withVideos: number; withMeasurements: number };
   selectedSession: Session | null; setSelectedSession: (s: Session | null) => void;
-  allSessions: Session[];
+  allSessions: Session[]; onRefresh?: () => void;
 }) {
   const PAGE_SIZE = 20;
   const [view, setView] = useState<'sessions' | 'generations'>('generations');
   const [generations, setGenerations] = useState<any[]>([]);
   const [genLoading, setGenLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const pin = sessionStorage.getItem(PIN_SESSION_KEY) || '';
+
+  const deleteGeneration = async (genId: string) => {
+    if (!confirm('Delete this try-on entry?')) return;
+    setDeletingId(genId);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_generations?id=eq.${genId}`, {
+        method: 'DELETE',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
+      });
+      if (res.ok || res.status === 204) {
+        setGenerations(prev => prev.filter(g => g.id !== genId));
+      } else {
+        alert('Failed to delete');
+      }
+    } catch { alert('Delete failed'); }
+    setDeletingId(null);
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    if (!confirm('Delete this session and all its generations?')) return;
+    setDeletingId(sessionId);
+    try {
+      // Delete generations first
+      await fetch(`${SUPABASE_URL}/rest/v1/vto_generations?session_id=eq.${sessionId}`, {
+        method: 'DELETE',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
+      });
+      // Then delete session
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${sessionId}`, {
+        method: 'DELETE',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
+      });
+      if (res.ok || res.status === 204) {
+        if (selectedSession?.id === sessionId) setSelectedSession(null);
+        onRefresh?.();
+      } else {
+        alert('Failed to delete session');
+      }
+    } catch { alert('Delete failed'); }
+    setDeletingId(null);
+  };
 
   // Fetch generations for the Generations view
   useEffect(() => {
@@ -324,16 +367,16 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                {['Time', 'Garment', 'Category', 'VTO Result', 'Video', 'Size', 'Duration', 'Description'].map(h => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
+                {['Time', 'Garment', 'Category', 'VTO Result', 'Video', 'Size', 'Duration', 'Description', ''].map(h => (
+                  <th key={h || '_del'} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {genLoading ? (
-                <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>Loading...</td></tr>
+                <tr><td colSpan={9} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>Loading...</td></tr>
               ) : generations.length === 0 ? (
-                <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>No try-ons yet. They'll appear here after the first VTO generation.</td></tr>
+                <tr><td colSpan={9} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>No try-ons yet. They'll appear here after the first VTO generation.</td></tr>
               ) : generations.map(g => (
                 <tr key={g.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                   <td style={td}>{fmtTime(g.created_at)}</td>
@@ -344,6 +387,16 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
                   <td style={td}><span style={{ fontWeight: 600 }}>{g.body_measurements?.recommended_size || '—'}</span></td>
                   <td style={td}>{g.duration_ms ? `${(g.duration_ms / 1000).toFixed(1)}s` : '—'}</td>
                   <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.garment_description || '—'}</td>
+                  <td style={td}>
+                    <button onClick={(e) => { e.stopPropagation(); deleteGeneration(g.id); }}
+                      disabled={deletingId === g.id}
+                      style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '4px 10px', color: '#ef4444', fontSize: 11, cursor: 'pointer', opacity: deletingId === g.id ? 0.4 : 0.7, transition: 'opacity 0.15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                      onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+                      title="Delete this try-on">
+                      {deletingId === g.id ? '...' : '✕'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -358,8 +411,8 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-                  {['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens'].map(h => (
-                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
+                  {['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens', ''].map(h => (
+                    <th key={h || '_del'} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -379,6 +432,16 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
                     <td style={td}>{s.generated_video_url ? <span style={{ color: '#22c55e', fontSize: 12 }}>YES</span> : <span style={{ color: '#444' }}>—</span>}</td>
                     <td style={td}><span style={{ fontWeight: 600 }}>{s.body_measurements?.recommended_size || '—'}</span></td>
                     <td style={td}>{s.generation_count}</td>
+                    <td style={td}>
+                      <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                        disabled={deletingId === s.id}
+                        style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '4px 10px', color: '#ef4444', fontSize: 11, cursor: 'pointer', opacity: deletingId === s.id ? 0.4 : 0.7, transition: 'opacity 0.15s' }}
+                        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                        onMouseLeave={e => (e.currentTarget.style.opacity = '0.7')}
+                        title="Delete session">
+                        {deletingId === s.id ? '...' : '✕'}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
