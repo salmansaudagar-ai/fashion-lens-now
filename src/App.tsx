@@ -16,6 +16,7 @@ const ProductDetail = React.lazy(() => import("./pages/ProductDetail"));
 const Register = React.lazy(() => import("./pages/Register"));
 const OrderTracking = React.lazy(() => import("./pages/OrderTracking"));
 const ModelComparison = React.lazy(() => import("./pages/ModelComparison"));
+const Dashboard = React.lazy(() => import("./pages/Dashboard"));
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
                 <Route path="/order-tracking" element={<OrderTracking />} />
                 <Route path="/compare" element={<ModelComparison />} />
+                <Route path="/dashboard" element={<Dashboard />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
