@@ -201,6 +201,18 @@ export const OutfitSelectionStep: React.FC = () => {
             outfitImageUrls: [outfitImageBase64],
             category: item.category === 'bottomwear' ? 'lower_body' : item.category === 'footwear' ? 'lower_body' : 'upper_body',
             garmentDescription: item.name,
+            garmentMeta: {
+              brand: item.brand,
+              fabric: item.fabric,
+              pattern: item.pattern,
+              fit: item.fit,
+              categoryTree: item.categoryTree,
+              color: item.selectedColor || item.colorVariants?.[0]?.name,
+              colorHex: item.colorVariants?.[0]?.hex,
+              sizes: item.sizes,
+              eanCodes: item.eanCodes,
+              extraAttributes: item.extraAttributes,
+            },
           }),
           signal: controller.signal,
         }

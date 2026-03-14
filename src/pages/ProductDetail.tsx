@@ -267,6 +267,19 @@ const ProductDetail: React.FC = () => {
           body: JSON.stringify({
             fullBodyImage,
             outfitImageUrls: [outfitImageBase64],
+            garmentDescription: item.name,
+            garmentMeta: {
+              brand: item.brand,
+              fabric: item.fabric,
+              pattern: item.pattern,
+              fit: item.fit,
+              categoryTree: item.categoryTree,
+              color: item.selectedColor || item.colorVariants?.[0]?.name,
+              colorHex: item.colorVariants?.[0]?.hex,
+              sizes: item.sizes,
+              eanCodes: item.eanCodes,
+              extraAttributes: item.extraAttributes,
+            },
           }),
           signal: controller.signal,
         }

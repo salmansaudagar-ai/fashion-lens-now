@@ -17,6 +17,14 @@ export interface CatalogItem {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  // Rich catalog fields
+  fabric?: string;
+  pattern?: string;
+  fit?: string;
+  category_tree?: string;
+  extra_attributes?: Record<string, any>;
+  ean_codes?: Array<{ ean: string; sku?: string; size: string }>;
+  sku?: string;
 }
 
 function toOutfitItem(item: CatalogItem): OutfitItem {
@@ -32,6 +40,14 @@ function toOutfitItem(item: CatalogItem): OutfitItem {
     actualPrice: item.actual_price,
     sellingPrice: item.selling_price,
     countryOfOrigin: item.country_of_origin,
+    // Rich catalog metadata
+    fabric: item.fabric,
+    pattern: item.pattern,
+    fit: item.fit,
+    categoryTree: item.category_tree,
+    extraAttributes: item.extra_attributes,
+    eanCodes: item.ean_codes,
+    sku: item.sku,
   };
 }
 

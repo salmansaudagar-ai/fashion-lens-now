@@ -5,6 +5,12 @@ export interface ColorVariant {
   hex: string;
 }
 
+export interface EanCode {
+  ean: string;
+  sku?: string;
+  size: string;
+}
+
 export interface OutfitItem {
   id: string;
   name: string;
@@ -18,6 +24,14 @@ export interface OutfitItem {
   actualPrice?: number;
   sellingPrice?: number;
   countryOfOrigin?: string;
+  // Rich catalog metadata for AI generation & size mapping
+  fabric?: string;
+  pattern?: string;
+  fit?: string;
+  categoryTree?: string;
+  extraAttributes?: Record<string, any>;
+  eanCodes?: EanCode[];
+  sku?: string;
 }
 
 export interface SelectedOutfit {

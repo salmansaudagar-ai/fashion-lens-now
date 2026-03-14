@@ -284,6 +284,21 @@ export const VirtualLookStep: React.FC = () => {
         selectedColor: item!.selectedColor || item!.colorVariants[0]?.name,
       }));
 
+      // Build rich garment metadata from the primary item
+      const primaryItem = selectedItems[0]!;
+      const garmentMeta = {
+        brand: primaryItem.brand,
+        fabric: primaryItem.fabric,
+        pattern: primaryItem.pattern,
+        fit: primaryItem.fit,
+        categoryTree: primaryItem.categoryTree,
+        color: primaryItem.selectedColor || primaryItem.colorVariants?.[0]?.name,
+        colorHex: primaryItem.colorVariants?.[0]?.hex,
+        sizes: primaryItem.sizes,
+        eanCodes: primaryItem.eanCodes,
+        extraAttributes: primaryItem.extraAttributes,
+      };
+
       // Convert outfit images to base64
       const outfitImageUrls = await Promise.all(
         selectedItems.map(item => imageUrlToBase64(item!.imageUrl))
@@ -302,6 +317,8 @@ export const VirtualLookStep: React.FC = () => {
             fullBodyImage: fullBodyImage,
             outfitItems,
             outfitImageUrls,
+            garmentDescription: primaryItem.name,
+            garmentMeta,
           }),
         }
       );
