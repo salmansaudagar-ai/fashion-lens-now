@@ -91,7 +91,7 @@ serve(async (req) => {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const allowed = ['name', 'category', 'image_url', 'price', 'brand', 'sizes', 'actual_price', 'selling_price', 'country_of_origin', 'color_variants', 'is_active', 'sort_order'];
+    const allowed = ['name', 'category', 'image_url', 'price', 'brand', 'sizes', 'actual_price', 'selling_price', 'country_of_origin', 'color_variants', 'is_active', 'sort_order', 'images', 'extra_attributes', 'fabric', 'pattern', 'fit', 'wash_care', 'hsn_code', 'sku', 'ean_codes', 'category_tree'];
     const sanitized: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in updates) sanitized[key] = updates[key];

@@ -55,6 +55,16 @@ serve(async (req) => {
       color_variants: Array.isArray(p.color_variants) ? p.color_variants : [],
       is_active: p.is_active !== false,
       sort_order: Number(p.sort_order) || idx + 1,
+      images: Array.isArray(p.images) ? p.images : [],
+      extra_attributes: (typeof p.extra_attributes === 'object' && p.extra_attributes) ? p.extra_attributes : {},
+      fabric: String(p.fabric || ''),
+      pattern: String(p.pattern || ''),
+      fit: String(p.fit || ''),
+      wash_care: String(p.wash_care || ''),
+      hsn_code: String(p.hsn_code || ''),
+      sku: String(p.sku || ''),
+      ean_codes: Array.isArray(p.ean_codes) ? p.ean_codes : [],
+      category_tree: String(p.category_tree || ''),
     }));
 
     const supabase = createClient(

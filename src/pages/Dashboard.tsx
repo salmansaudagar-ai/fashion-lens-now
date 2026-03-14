@@ -6,7 +6,7 @@ import {
   Settings, Activity, ChevronLeft, LogOut, Zap, Clock, Eye,
   Download, RefreshCw, ArrowUpRight, ArrowDownRight,
   X, CheckCircle2, Users, Video, Ruler, TrendingUp,
-  AlertTriangle, Lock, Upload, Trash2, FileSpreadsheet,
+  AlertTriangle, Lock, Upload, Trash2, FileSpreadsheet, ChevronRight, Package, Tag, Layers,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -856,11 +856,20 @@ function parseFyndExcel(workbook: XLSX.WorkBook): any[] {
   }
   const ga = (row: any[], name: string) => { const i = attrMap[name]; return i != null ? row[i] : null; };
   const colorHexMap: Record<string, string> = { blue:'#1E3A5F', red:'#C62828', green:'#2E7D32', black:'#212121', white:'#F5F5F5', navy:'#0D1B2A', grey:'#616161', gray:'#616161', brown:'#5D4037', beige:'#D7CCC8', pink:'#E91E63', purple:'#7B1FA2', yellow:'#F9A825', orange:'#EF6C00', cream:'#FFF8E1', maroon:'#800000', teal:'#00796B', olive:'#827717', lavender:'#B39DDB', coral:'#FF7043', khaki:'#BDB76B', rust:'#BF360C', wine:'#880E4F', gold:'#FFD600', silver:'#BDBDBD', charcoal:'#37474F', mint:'#00897B', peach:'#FFAB91', ivory:'#FFFFF0', tan:'#D2B48C' };
+  const imageKeys = ['MODEL','MODEL2','MODEL3','MODEL4','MODEL5','MODEL6','MODEL7','MODEL8','MODEL9','MODEL10','MODEL11','MODEL12','MODEL13','MODEL14','SWATCH'];
   const products: any[] = [];
   for (const [gsku, rows] of Object.entries(groups)) {
     const f = rows[0];
+    // Sizes + EAN codes per variant
     const sizes: string[] = [];
-    for (const row of rows) { const s = ga(row, 'Standard Size') || ga(row, 'Size'); if (s != null) sizes.push(String(s)); }
+    const eanCodes: any[] = [];
+    for (const row of rows) {
+      const s = ga(row, 'Standard Size') || ga(row, 'Size');
+      if (s != null) {
+        sizes.push(String(s));
+        eanCodes.push({ size: String(s), ean: String(ga(row, 'EAN') || ''), sku: String(ga(row, 'Item SKU') || '') });
+      }
+    }
     const brand = ga(f, 'Brand Name') || ga(f, 'Brand') || f[colIdx['Product Label']] || '';
     const name = ga(f, 'Product Title') || ga(f, 'Product Name') || `${brand} Product`;
     const mrp = Number(ga(f, 'MRP')) || 0;
@@ -874,6 +883,22 @@ function parseFyndExcel(workbook: XLSX.WorkBook): any[] {
     if (cl.includes('footwear') || cl.includes('shoes') || cl.includes('sneaker')) cat = 'footwear';
     else if (cl.includes('bottom') || cl.includes('jeans') || cl.includes('trouser') || cl.includes('pant') || cl.includes('shorts')) cat = 'bottomwear';
     const hex = colorHexMap[color.toLowerCase()] || '#808080';
+    // Collect all images
+    const images: any[] = [];
+    for (const ik of imageKeys) {
+      const url = ga(f, ik);
+      if (url && typeof url === 'string' && url.startsWith('http')) images.push({ type: ik, url });
+    }
+    // Collect all extra attributes (skip images, sizes, and fields we already extract)
+    const skipAttrs = new Set([...imageKeys, 'Brand', 'Brand Name', 'Product Title', 'Product Name', 'MRP', 'List Price', 'Primary Color', 'Color Family', 'Country of Origin', 'Standard Size', 'Size', 'Item SKU', 'EAN']);
+    const extra: Record<string, any> = {};
+    for (const [attrName, colI] of Object.entries(attrMap)) {
+      if (skipAttrs.has(attrName)) continue;
+      const v = f[colI];
+      if (v != null && v !== '' && v !== 0) extra[attrName] = v;
+    }
+    // Clean category tree for display
+    const cleanCatTree = String(catTree).replace(/^CTC-\d+>>\s*/, '').replace(/\([^)]*\)/g, '').replace(/\s*>\s*/g, ' > ').trim();
     products.push({
       id: String(gsku).replace(/[^a-zA-Z0-9_-]/g, '-'),
       name: String(name), category: cat, image_url: String(imgUrl), price: mrp,
@@ -882,6 +907,11 @@ function parseFyndExcel(workbook: XLSX.WorkBook): any[] {
       country_of_origin: String(country),
       color_variants: [{ name: String(color), hex }],
       is_active: true, sort_order: products.length + 1,
+      images, ean_codes: eanCodes, sku: String(ga(f, 'Item SKU') || gsku),
+      hsn_code: String(ga(f, 'HSN') || ''), fabric: String(ga(f, 'Fabric Detail') || ga(f, 'Fabric Type') || ''),
+      pattern: String(ga(f, 'Pattern') || ''), fit: String(ga(f, 'Fit') || ''),
+      wash_care: String(ga(f, 'Wash Care') || ''), category_tree: cleanCatTree,
+      extra_attributes: extra,
     });
   }
   return products;
@@ -898,6 +928,7 @@ function CatalogTabInline() {
   const [clearOnUpload, setClearOnUpload] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
+  const [galleryIdx, setGalleryIdx] = useState(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const fetchItems = useCallback(async () => {
@@ -1050,7 +1081,7 @@ function CatalogTabInline() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {filtered.map((item: any) => (
             <Card key={item.id} className={`overflow-hidden group cursor-pointer hover:ring-2 hover:ring-indigo-200 transition-all ${!item.is_active ? 'opacity-40' : ''}`}
-              onClick={() => setSelectedItem(item)}>
+              onClick={() => { setGalleryIdx(0); setSelectedItem(item); }}>
               <div className="aspect-square bg-slate-50 relative overflow-hidden">
                 <img src={item.image_url} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f1f5f9" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%2394a3b8" font-size="10">No image</text></svg>'; }} />
@@ -1093,133 +1124,198 @@ function CatalogTabInline() {
       {/* ── Product Detail Modal (portal to body) ── */}
       {selectedItem && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }} onClick={() => setSelectedItem(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-[900px] max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[94vw] max-w-[1100px] max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/80">
-              <div>
-                <p className="text-lg font-semibold text-slate-900">{selectedItem.name}</p>
-                <p className="text-xs text-slate-400 mt-0.5">ID: {selectedItem.id}</p>
+            <div className="flex items-center justify-between px-6 py-3 border-b border-slate-100 bg-slate-50/80">
+              <div className="flex-1 min-w-0">
+                <p className="text-base font-semibold text-slate-900 truncate">{selectedItem.name}</p>
+                <div className="flex items-center gap-3 mt-0.5">
+                  {selectedItem.category_tree && <p className="text-[10px] text-slate-400 truncate">{selectedItem.category_tree}</p>}
+                  {!selectedItem.category_tree && <p className="text-[10px] text-slate-400">ID: {selectedItem.id}</p>}
+                </div>
               </div>
-              <button onClick={() => setSelectedItem(null)} className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors">
-                <X className="w-4 h-4 text-slate-500" />
-              </button>
+              <div className="flex items-center gap-2 ml-4">
+                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${selectedItem.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                  {selectedItem.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <button onClick={() => { handleToggle(selectedItem); setSelectedItem({ ...selectedItem, is_active: !selectedItem.is_active }); }}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-medium border transition-colors ${selectedItem.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'}`}>
+                  {selectedItem.is_active ? 'Deactivate' : 'Activate'}
+                </button>
+                <button onClick={() => { handleDelete(selectedItem); setSelectedItem(null); }}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-medium border border-red-200 text-red-600 hover:bg-red-50">Delete</button>
+                <button onClick={() => setSelectedItem(null)} className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center">
+                  <X className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="flex gap-6 flex-col lg:flex-row">
-                {/* Image */}
-                <div className="lg:w-[340px] shrink-0">
-                  <div className="aspect-[3/4] rounded-xl overflow-hidden bg-slate-100">
-                    <img src={selectedItem.image_url} alt={selectedItem.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 133"><rect fill="%23f1f5f9" width="100" height="133"/><text x="50" y="70" text-anchor="middle" fill="%2394a3b8" font-size="8">No image</text></svg>'; }} />
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="flex gap-5 flex-col lg:flex-row">
+                {/* Left: Image Gallery */}
+                <div className="lg:w-[320px] shrink-0 space-y-3">
+                  {/* Main Image */}
+                  <div className="aspect-[3/4] rounded-xl overflow-hidden bg-slate-100 relative">
+                    {(() => {
+                      const imgs = selectedItem.images?.length > 0 ? selectedItem.images : [{ type: 'Main', url: selectedItem.image_url }];
+                      const currentImg = imgs[galleryIdx] || imgs[0];
+                      return (
+                        <>
+                          <img src={currentImg.url} alt={currentImg.type} className="w-full h-full object-cover"
+                            onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 133"><rect fill="%23f1f5f9" width="100" height="133"/><text x="50" y="70" text-anchor="middle" fill="%2394a3b8" font-size="8">No image</text></svg>'; }} />
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/50 text-white text-[10px] font-medium">{currentImg.type}</span>
+                          {imgs.length > 1 && <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/50 text-white text-[10px]">{galleryIdx + 1}/{imgs.length}</span>}
+                        </>
+                      );
+                    })()}
                   </div>
-                  {/* Active Toggle in modal */}
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${selectedItem.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-                      {selectedItem.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                    <div className="flex gap-2">
-                      <button onClick={() => { handleToggle(selectedItem); setSelectedItem({ ...selectedItem, is_active: !selectedItem.is_active }); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${selectedItem.is_active ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'}`}>
-                        {selectedItem.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                      <button onClick={() => { handleDelete(selectedItem); setSelectedItem(null); }}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
-                        Delete
-                      </button>
+                  {/* Thumbnail Strip */}
+                  {selectedItem.images?.length > 1 && (
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {selectedItem.images.map((img: any, i: number) => (
+                        <button key={i} onClick={() => setGalleryIdx(i)}
+                          className={`w-14 h-14 rounded-lg overflow-hidden shrink-0 border-2 transition-all ${galleryIdx === i ? 'border-indigo-500 ring-1 ring-indigo-200' : 'border-slate-200 hover:border-slate-300'}`}>
+                          <img src={img.url} alt={img.type} className="w-full h-full object-cover"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        </button>
+                      ))}
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Attributes */}
-                <div className="flex-1 space-y-5">
-                  {/* Pricing */}
+                {/* Right: All Attributes */}
+                <div className="flex-1 space-y-4 min-w-0">
+                  {/* Pricing Row */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'MRP', value: `₹${(selectedItem.price || 0).toLocaleString()}`, bold: true },
+                      { label: 'Selling Price', value: `₹${(selectedItem.selling_price || 0).toLocaleString()}`, bold: true },
+                      { label: 'Discount', value: selectedItem.price > selectedItem.selling_price ? `${Math.round((1 - selectedItem.selling_price / selectedItem.price) * 100)}% off` : 'No discount', bold: false },
+                    ].map(a => (
+                      <div key={a.label} className="bg-slate-50 rounded-lg p-2.5">
+                        <p className="text-[10px] text-slate-400">{a.label}</p>
+                        <p className={`text-sm mt-0.5 ${a.bold ? 'font-semibold text-slate-800' : 'text-slate-600'}`}>{a.value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Core Info Grid */}
                   <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Pricing</h3>
-                    <div className="grid grid-cols-3 gap-3">
+                    <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Tag className="w-3 h-3" /> Product Details</h3>
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                       {[
-                        { label: 'MRP', value: `₹${(selectedItem.price || 0).toLocaleString()}` },
-                        { label: 'Selling Price', value: `₹${(selectedItem.selling_price || 0).toLocaleString()}` },
-                        { label: 'Discount', value: selectedItem.price > selectedItem.selling_price ? `${Math.round((1 - selectedItem.selling_price / selectedItem.price) * 100)}% off` : 'None' },
-                      ].map(attr => (
-                        <div key={attr.label} className="bg-slate-50 rounded-lg p-3">
-                          <p className="text-[10px] text-slate-400">{attr.label}</p>
-                          <p className="text-sm font-semibold text-slate-800 mt-0.5">{attr.value}</p>
+                        { label: 'Brand', value: selectedItem.brand },
+                        { label: 'Category', value: selectedItem.category },
+                        { label: 'SKU', value: selectedItem.sku },
+                        { label: 'HSN Code', value: selectedItem.hsn_code },
+                        { label: 'Fabric', value: selectedItem.fabric },
+                        { label: 'Pattern', value: selectedItem.pattern },
+                        { label: 'Fit', value: selectedItem.fit },
+                        { label: 'Wash Care', value: selectedItem.wash_care },
+                        { label: 'Country', value: selectedItem.country_of_origin },
+                      ].filter(a => a.value && a.value !== '').map(a => (
+                        <div key={a.label} className="bg-slate-50 rounded-lg px-2.5 py-2">
+                          <p className="text-[10px] text-slate-400">{a.label}</p>
+                          <p className="text-xs font-medium text-slate-700 mt-0.5">{a.value}</p>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Product Info */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Product Info</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { label: 'Brand', value: selectedItem.brand || '—' },
-                        { label: 'Category', value: selectedItem.category || '—' },
-                        { label: 'Country of Origin', value: selectedItem.country_of_origin || '—' },
-                        { label: 'Sort Order', value: String(selectedItem.sort_order ?? '—') },
-                      ].map(attr => (
-                        <div key={attr.label} className="bg-slate-50 rounded-lg p-3">
-                          <p className="text-[10px] text-slate-400">{attr.label}</p>
-                          <p className="text-sm font-medium text-slate-700 mt-0.5">{attr.value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Sizes */}
+                  {/* Sizes with EAN */}
                   {selectedItem.sizes?.length > 0 && (
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Available Sizes ({selectedItem.sizes.length})</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedItem.sizes.map((s: string, i: number) => (
-                          <span key={i} className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-sm font-medium text-slate-700">{s}</span>
-                        ))}
-                      </div>
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Ruler className="w-3 h-3" /> Sizes ({selectedItem.sizes.length})</h3>
+                      {selectedItem.ean_codes?.length > 0 ? (
+                        <div className="bg-slate-50 rounded-lg overflow-hidden border border-slate-200">
+                          <table className="w-full text-xs">
+                            <thead><tr className="border-b border-slate-200 bg-slate-100/50">
+                              <th className="text-left px-3 py-1.5 text-[10px] text-slate-400 font-medium">Size</th>
+                              <th className="text-left px-3 py-1.5 text-[10px] text-slate-400 font-medium">EAN</th>
+                              <th className="text-left px-3 py-1.5 text-[10px] text-slate-400 font-medium">Item SKU</th>
+                            </tr></thead>
+                            <tbody>
+                              {selectedItem.ean_codes.map((ec: any, i: number) => (
+                                <tr key={i} className="border-b border-slate-100 last:border-0">
+                                  <td className="px-3 py-1.5 font-medium text-slate-700">{ec.size}</td>
+                                  <td className="px-3 py-1.5 font-mono text-slate-500">{ec.ean || '—'}</td>
+                                  <td className="px-3 py-1.5 font-mono text-slate-500">{ec.sku || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedItem.sizes.map((s: string, i: number) => (
+                            <span key={i} className="px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-700">{s}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Color Variants */}
                   {selectedItem.color_variants?.length > 0 && (
                     <div>
-                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Color Variants ({selectedItem.color_variants.length})</h3>
-                      <div className="flex flex-wrap gap-3">
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Colors</h3>
+                      <div className="flex flex-wrap gap-2">
                         {selectedItem.color_variants.map((v: any, i: number) => (
-                          <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2 border border-slate-200">
-                            <span className="w-5 h-5 rounded-full border border-slate-200 shadow-inner" style={{ backgroundColor: v.hex }} />
-                            <span className="text-sm text-slate-700">{v.name || 'Unknown'}</span>
-                            <span className="text-[10px] text-slate-400 font-mono">{v.hex}</span>
+                          <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-lg px-2.5 py-1.5 border border-slate-200">
+                            <span className="w-4 h-4 rounded-full border border-slate-200" style={{ backgroundColor: v.hex }} />
+                            <span className="text-xs text-slate-700">{v.name}</span>
+                            <span className="text-[9px] text-slate-400 font-mono">{v.hex}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  {/* Image URL */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Image URL</h3>
-                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                      <p className="text-xs text-slate-500 font-mono break-all">{selectedItem.image_url || 'No image'}</p>
-                    </div>
-                  </div>
-
-                  {/* Timestamps */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Timestamps</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { label: 'Created', value: selectedItem.created_at ? new Date(selectedItem.created_at).toLocaleString() : '—' },
-                        { label: 'Updated', value: selectedItem.updated_at ? new Date(selectedItem.updated_at).toLocaleString() : '—' },
-                      ].map(attr => (
-                        <div key={attr.label} className="bg-slate-50 rounded-lg p-3">
-                          <p className="text-[10px] text-slate-400">{attr.label}</p>
-                          <p className="text-xs text-slate-600 mt-0.5">{attr.value}</p>
+                  {/* Extra Attributes from Fynd */}
+                  {selectedItem.extra_attributes && Object.keys(selectedItem.extra_attributes).length > 0 && (
+                    <div>
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1"><Layers className="w-3 h-3" /> All Attributes ({Object.keys(selectedItem.extra_attributes).length})</h3>
+                      <div className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                        <div className="grid grid-cols-1 divide-y divide-slate-100">
+                          {Object.entries(selectedItem.extra_attributes).map(([k, v]: [string, any]) => (
+                            <div key={k} className="flex px-3 py-1.5">
+                              <span className="text-[10px] text-slate-400 w-40 shrink-0 truncate">{k}</span>
+                              <span className="text-xs text-slate-700 break-all">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      </div>
                     </div>
+                  )}
+
+                  {/* Category Tree */}
+                  {selectedItem.category_tree && (
+                    <div>
+                      <h3 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Category Path</h3>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {selectedItem.category_tree.split(' > ').map((seg: string, i: number, arr: string[]) => (
+                          <React.Fragment key={i}>
+                            <span className="text-xs bg-slate-50 border border-slate-200 rounded-md px-2 py-0.5 text-slate-700">{seg.trim()}</span>
+                            {i < arr.length - 1 && <ChevronRight className="w-3 h-3 text-slate-300" />}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Timestamps + ID */}
+                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100">
+                    {[
+                      { label: 'Product ID', value: selectedItem.id },
+                      { label: 'Created', value: selectedItem.created_at ? new Date(selectedItem.created_at).toLocaleString() : '—' },
+                      { label: 'Updated', value: selectedItem.updated_at ? new Date(selectedItem.updated_at).toLocaleString() : '—' },
+                    ].map(a => (
+                      <div key={a.label}>
+                        <p className="text-[10px] text-slate-400">{a.label}</p>
+                        <p className="text-[11px] text-slate-500 font-mono mt-0.5 truncate">{a.value}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
