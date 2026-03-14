@@ -4,6 +4,17 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const hdrs = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
 
+/** Convert expired signed URLs to public URLs (bucket is now public) */
+const toPublicUrl = (url: string | null): string | null => {
+  if (!url) return null;
+  // Already a public URL
+  if (url.includes('/object/public/')) return url;
+  // Signed URL pattern: .../object/sign/bucket/path?token=...
+  const m = url.match(/\/object\/sign\/([^?]+)/);
+  if (m) return `${SUPABASE_URL}/storage/v1/object/public/${m[1]}`;
+  return url;
+};
+
 interface Session {
   id: string;
   session_token: string;
@@ -1179,8 +1190,9 @@ function KPI({ label, value, sub }: { label: string; value: string | number; sub
 }
 
 function Thumb({ url }: { url: string | null }) {
-  if (!url) return <span style={{ color: '#444' }}>—</span>;
-  return <img src={url} alt="" style={{ width: 36, height: 48, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.1)' }} />;
+  const pub = toPublicUrl(url);
+  if (!pub) return <span style={{ color: '#444' }}>—</span>;
+  return <img src={pub} alt="" style={{ width: 36, height: 48, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.1)' }} />;
 }
 
 function StuckList({ addLog }: { addLog: (msg: string) => void }) {
@@ -1237,18 +1249,21 @@ function SessionModal({ s, onClose }: { s: Session; onClose: () => void }) {
           <div><span style={{ color: '#888' }}>Phone:</span> {s.phone || '—'}</div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
-          {[['Selfie', s.selfie_url], ['Full Body', s.full_body_url], ['Garment', s.garment_url], ['VTO Result', s.generated_look_url]].map(([label, url]) => (
+          {[['Selfie', s.selfie_url], ['Full Body', s.full_body_url], ['Garment', s.garment_url], ['VTO Result', s.generated_look_url]].map(([label, url]) => {
+            const pub = toPublicUrl(url as string | null);
+            return (
             <div key={String(label)}>
               <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>{String(label)}</div>
-              {url ? <img src={String(url)} alt={String(label)} style={{ width: '100%', height: 200, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }} />
+              {pub ? <img src={pub} alt={String(label)} style={{ width: '100%', height: 200, objectFit: 'cover', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }} />
                 : <div style={{ width: '100%', height: 200, borderRadius: 8, border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: 13 }}>No image</div>}
             </div>
-          ))}
+            );
+          })}
         </div>
         {s.generated_video_url && (
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>Generated Video</div>
-            <video src={s.generated_video_url} controls autoPlay loop muted style={{ maxHeight: 300, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }} />
+            <video src={toPublicUrl(s.generated_video_url)!} controls autoPlay loop muted style={{ maxHeight: 300, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)' }} />
           </div>
         )}
         {s.body_measurements && (

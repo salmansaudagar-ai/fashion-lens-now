@@ -608,14 +608,12 @@ serve(async (req) => {
       supabase.storage.from("vto-images").upload(garmentPath, garmentBytes, { contentType: garmentMime, upsert: true }),
     ]);
 
-    // Parallel: get signed URLs for both
-    const [resultSignedRes, garmentSignedRes] = await Promise.all([
-      supabase.storage.from("vto-images").createSignedUrl(path, 86400),
-      supabase.storage.from("vto-images").createSignedUrl(garmentPath, 86400),
-    ]);
-    const imageUrl = resultSignedRes.data?.signedUrl;
+    // Use public URLs (bucket is public — no expiration)
+    const { data: resultPublic } = supabase.storage.from("vto-images").getPublicUrl(path);
+    const { data: garmentPublic } = supabase.storage.from("vto-images").getPublicUrl(garmentPath);
+    const imageUrl = resultPublic?.publicUrl;
     if (!imageUrl) throw new Error("Failed to create image URL");
-    const garmentUrl = garmentSignedRes.data?.signedUrl ?? "";
+    const garmentUrl = garmentPublic?.publicUrl ?? "";
 
     // ── Save training data in PARALLEL (non-blocking) ────────
     // Fire-and-forget: don't block the response

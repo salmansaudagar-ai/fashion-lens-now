@@ -48,17 +48,17 @@ const uploadImage = async (base64: string, sessionToken: string, type: 'selfie' 
       return null;
     }
     
-    // Create signed URL instead of public URL (expires in 24 hours)
-    const { data: urlData, error: urlError } = await supabase.storage
+    // Use public URL (bucket is public — no expiration)
+    const { data: urlData } = supabase.storage
       .from('vto-images')
-      .createSignedUrl(data.path, 86400); // 24 hours
-    
-    if (urlError) {
-      console.error('Error creating signed URL:', urlError);
+      .getPublicUrl(data.path);
+
+    if (!urlData?.publicUrl) {
+      console.error('Error creating public URL');
       return null;
     }
-    
-    return urlData.signedUrl;
+
+    return urlData.publicUrl;
   } catch (err) {
     console.error('Upload failed:', err);
     return null;

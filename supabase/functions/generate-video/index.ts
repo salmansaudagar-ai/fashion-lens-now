@@ -257,10 +257,10 @@ serve(async (req) => {
       .upload(videoPath, videoBytes, { contentType: "video/mp4", upsert: true });
     if (uploadError) throw new Error(`Video upload failed: ${uploadError.message}`);
 
-    const { data: signedData } = await supabase.storage
+    const { data: publicData } = supabase.storage
       .from("vto-images")
-      .createSignedUrl(videoPath, 86400);
-    const videoUrl = signedData?.signedUrl;
+      .getPublicUrl(videoPath);
+    const videoUrl = publicData?.publicUrl;
     if (!videoUrl) throw new Error("Failed to create video URL");
 
     // Update session
