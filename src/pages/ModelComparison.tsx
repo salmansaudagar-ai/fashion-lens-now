@@ -262,14 +262,17 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
     if (!confirm('Delete this try-on entry?')) return;
     setDeletingId(genId);
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_generations?id=eq.${genId}`, {
-        method: 'DELETE',
-        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
+      // Use edge function for delete (service role key needed)
+      const res = await fetch(`${FUNCTION_BASE}/admin-sessions`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin },
+        body: JSON.stringify({ action: 'delete_generation', generation_id: genId }),
       });
-      if (res.ok || res.status === 204) {
+      if (res.ok) {
         setGenerations(prev => prev.filter(g => g.id !== genId));
       } else {
-        alert('Failed to delete');
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete');
       }
     } catch { alert('Delete failed'); }
     setDeletingId(null);
@@ -279,21 +282,17 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
     if (!confirm('Delete this session and all its generations?')) return;
     setDeletingId(sessionId);
     try {
-      // Delete generations first
-      await fetch(`${SUPABASE_URL}/rest/v1/vto_generations?session_id=eq.${sessionId}`, {
-        method: 'DELETE',
-        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
+      const res = await fetch(`${FUNCTION_BASE}/admin-sessions`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin },
+        body: JSON.stringify({ action: 'delete_session', session_id: sessionId }),
       });
-      // Then delete session
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_sessions?id=eq.${sessionId}`, {
-        method: 'DELETE',
-        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin, Prefer: 'return=minimal' },
-      });
-      if (res.ok || res.status === 204) {
+      if (res.ok) {
         if (selectedSession?.id === sessionId) setSelectedSession(null);
         onRefresh?.();
       } else {
-        alert('Failed to delete session');
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete session');
       }
     } catch { alert('Delete failed'); }
     setDeletingId(null);
