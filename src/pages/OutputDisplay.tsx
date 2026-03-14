@@ -195,15 +195,8 @@ export const OutputDisplay: React.FC = () => {
                 return;
               }
 
-              // Browsing: has full body photo, registered — customer is browsing catalog
-              // From capture_done: always transition (we know the session is fresh)
-              // From idle: if no look yet, OR if recently active with garment_url (re-browsing)
-              // From browsing: keep updating garment preview
-              const isBrowsingCandidate = row.full_body_url && row.registration_status === 'registered';
-              const isReBrowsing = row.generated_look_url && row.garment_url && row.updated_at &&
-                (Date.now() - new Date(row.updated_at).getTime() < 2 * 60 * 1000);
-              if (isBrowsingCandidate &&
-                  (!row.generated_look_url || displayState === 'capture_done' || displayState === 'browsing' || isReBrowsing)) {
+              // Browsing: has full body photo, registered, no generated look yet
+              if (row.full_body_url && row.registration_status === 'registered' && !row.generated_look_url) {
                 setCurrentSessionId(row.id);
                 setBrowsingFullBody(row.full_body_url);
                 setBrowsingGarment(row.garment_url || null);
