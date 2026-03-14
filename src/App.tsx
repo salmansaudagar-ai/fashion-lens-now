@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { CartProvider } from "@/contexts/CartContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
@@ -11,12 +11,10 @@ import OutputDisplay from "./pages/OutputDisplay";
 import NotFound from "./pages/NotFound";
 
 // Lazy-load pages only used on laptop/admin (not kiosk or display TV)
-const Admin = React.lazy(() => import("./pages/Admin"));
+const Dashboard = React.lazy(() => import("./pages/Dashboard"));
 const ProductDetail = React.lazy(() => import("./pages/ProductDetail"));
 const Register = React.lazy(() => import("./pages/Register"));
 const OrderTracking = React.lazy(() => import("./pages/OrderTracking"));
-const ModelComparison = React.lazy(() => import("./pages/ModelComparison"));
-const Dashboard = React.lazy(() => import("./pages/Dashboard"));
 
 const queryClient = new QueryClient();
 
@@ -39,11 +37,12 @@ const App = () => (
                 <Route path="/" element={<Index />} />
                 <Route path="/product/:id" element={<ProductDetail />} />
                 <Route path="/display" element={<OutputDisplay />} />
-                <Route path="/admin" element={<Admin />} />
+                <Route path="/admin" element={<Dashboard />} />
                 <Route path="/register" element={<Register />} />
                 <Route path="/order-tracking" element={<OrderTracking />} />
-                <Route path="/compare" element={<ModelComparison />} />
-                <Route path="/dashboard" element={<Dashboard />} />
+                {/* Legacy redirects */}
+                <Route path="/compare" element={<Navigate to="/admin" replace />} />
+                <Route path="/dashboard" element={<Navigate to="/admin" replace />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
