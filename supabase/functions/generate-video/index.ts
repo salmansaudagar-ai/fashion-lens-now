@@ -90,10 +90,10 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    // Get session to find the VTO result image
+    // Get session to find the VTO result image + customer profile
     const { data: session, error: sessErr } = await supabase
       .from("vto_sessions")
-      .select("id, generated_look_url")
+      .select("id, generated_look_url, customer_profile, garment_url")
       .eq("id", sessionId)
       .single();
 
@@ -125,13 +125,53 @@ serve(async (req) => {
     if (!saJson) throw new Error("GCP service account not configured");
     const accessToken = await getGcpAccessToken(saJson);
 
-    // Fetch video prompt from DB (with fallback)
+    // ── Adaptive video prompt based on customer profile ────────
+    const profile = session.customer_profile ?? {};
+    const gender = profile.gender || "unknown";
+    const skinTone = profile.skin_tone || "medium-brown";
+    const bodyType = profile.body_type || "average";
+    const ethnicity = profile.ethnicity_region || "south-asian";
+
+    // Pick video prompt key based on garment style (ethnic vs western)
+    // Simple heuristic: if profile was used with ethnic VTO prompt, use ethnic video
+    const isEthnic = ethnicity === "south-asian" || ethnicity === "southeast-asian";
+    const videoPromptKey = isEthnic ? "video_ethnic" : "video_western";
+
     const defaultVideoPrompt = "A fashion model poses subtly with gentle movement, slight turn and sway, professional studio lighting, fashion photography, cinematic quality, smooth slow motion";
+
     let prompt = defaultVideoPrompt;
+    let videoPromptVersion = "default";
     try {
-      const { data: promptRow } = await supabase.from("vto_prompts").select("prompt").eq("key", "video").single();
-      if (promptRow?.prompt) prompt = promptRow.prompt;
+      // Try versioned adaptive prompt first
+      const { data: versions } = await supabase
+        .from("vto_prompt_versions")
+        .select("version, prompt, traffic_weight")
+        .eq("prompt_key", videoPromptKey)
+        .eq("is_active", true);
+
+      if (versions && versions.length > 0) {
+        const totalWeight = versions.reduce((sum: number, v: any) => sum + (v.traffic_weight || 50), 0);
+        let rand = Math.random() * totalWeight;
+        for (const v of versions) {
+          rand -= (v.traffic_weight || 50);
+          if (rand <= 0) { prompt = v.prompt; videoPromptVersion = v.version; break; }
+        }
+        if (videoPromptVersion === "default") { prompt = versions[0].prompt; videoPromptVersion = versions[0].version; }
+      } else {
+        // Fallback to legacy vto_prompts
+        const { data: promptRow } = await supabase.from("vto_prompts").select("prompt").eq("key", "video").single();
+        if (promptRow?.prompt) { prompt = promptRow.prompt; videoPromptVersion = "legacy"; }
+      }
     } catch { console.warn("[Video] Failed to fetch prompt from DB, using default"); }
+
+    // Interpolate profile variables into prompt
+    prompt = prompt
+      .replace(/\{gender\}/g, gender)
+      .replace(/\{skin_tone\}/g, skinTone)
+      .replace(/\{body_type\}/g, bodyType)
+      .replace(/\{ethnicity_region\}/g, ethnicity);
+
+    console.log(`[Video] Using ${videoPromptKey}:${videoPromptVersion} prompt for ${gender} ${ethnicity} customer`);
 
     // Start Veo 3 Fast video generation
     const startUrl = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${VEO_MODEL}:predictLongRunning`;

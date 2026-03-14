@@ -25,7 +25,7 @@ interface Session {
 interface PromptRow { key: string; prompt: string; description: string | null; updated_at: string; }
 interface HealthStatus { supabaseApi: boolean; edgeFunction: boolean; lastCheck: string; }
 
-type TabKey = 'sessions' | 'analytics' | 'funnel' | 'prompts' | 'monitor';
+type TabKey = 'sessions' | 'analytics' | 'funnel' | 'prompts' | 'quality' | 'monitor';
 
 // ── Cost estimates (INR) ─────────────────────────────────────
 const COST = {
@@ -126,6 +126,7 @@ const ModelComparison: React.FC = () => {
     analytics: 'Analytics',
     funnel: 'Funnel',
     prompts: 'Prompts',
+    quality: 'Quality',
     monitor: 'Monitoring',
   };
 
@@ -158,6 +159,7 @@ const ModelComparison: React.FC = () => {
       {tab === 'analytics' && <AnalyticsTab allSessions={allSessions} />}
       {tab === 'funnel' && <FunnelTab allSessions={allSessions} />}
       {tab === 'prompts' && <PromptsTab />}
+      {tab === 'quality' && <QualityTab />}
       {tab === 'monitor' && (
         <MonitorTab health={health} runHealthCheck={runHealthCheck} logs={logs} addLog={addLog} />
       )}
@@ -602,16 +604,233 @@ function FunnelTab({ allSessions }: { allSessions: Session[] }) {
   );
 }
 
+// ─── Quality Tab ─────────────────────────────────────────────────────────────
+
+interface RatingRow {
+  id: string;
+  session_id: string;
+  rating_type: string;
+  rating: number;
+  thumbs: string;
+  issues: string[] | null;
+  prompt_key: string | null;
+  prompt_version: string | null;
+  garment_category: string | null;
+  customer_profile: Record<string, any> | null;
+  created_at: string;
+}
+
+function QualityTab() {
+  const [ratings, setRatings] = useState<RatingRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_ratings?select=*&order=created_at.desc&limit=200`, { headers: hdrs });
+        if (res.ok) setRatings(await res.json());
+      } catch {} finally { setLoading(false); }
+    })();
+  }, []);
+
+  const totalRatings = ratings.length;
+  const avgRating = totalRatings > 0 ? (ratings.reduce((s, r) => s + r.rating, 0) / totalRatings).toFixed(1) : '—';
+  const thumbsUp = ratings.filter(r => r.thumbs === 'up').length;
+  const thumbsOk = ratings.filter(r => r.thumbs === 'ok').length;
+  const thumbsDown = ratings.filter(r => r.thumbs === 'down').length;
+  const satisfaction = totalRatings > 0 ? Math.round((thumbsUp / totalRatings) * 100) : 0;
+
+  // Issues breakdown
+  const issueCount: Record<string, number> = {};
+  ratings.forEach(r => { (r.issues || []).forEach(i => { issueCount[i] = (issueCount[i] || 0) + 1; }); });
+  const sortedIssues = Object.entries(issueCount).sort((a, b) => b[1] - a[1]);
+
+  // By category
+  const catStats: Record<string, { total: number; sum: number }> = {};
+  ratings.forEach(r => {
+    const cat = r.garment_category || 'unknown';
+    if (!catStats[cat]) catStats[cat] = { total: 0, sum: 0 };
+    catStats[cat].total++;
+    catStats[cat].sum += r.rating;
+  });
+
+  // By skin tone (from customer_profile in ratings)
+  const skinStats: Record<string, { total: number; sum: number }> = {};
+  ratings.forEach(r => {
+    const tone = r.customer_profile?.skin_tone || 'unknown';
+    if (!skinStats[tone]) skinStats[tone] = { total: 0, sum: 0 };
+    skinStats[tone].total++;
+    skinStats[tone].sum += r.rating;
+  });
+
+  const cardStyle = { background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', padding: '20px 24px' };
+  const labelStyle = { fontSize: 11, color: '#666', textTransform: 'uppercase' as const, letterSpacing: '0.05em', fontWeight: 600, marginBottom: 4 };
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#666' }}>Loading quality data...</div>;
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Quality & Feedback Analytics</h2>
+        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Customer ratings, issue tracking, and quality metrics across categories and demographics.</p>
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Total Ratings</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: '#fff' }}>{totalRatings}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Avg Rating</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: '#fff' }}>{avgRating}<span style={{ fontSize: 14, color: '#666' }}>/5</span></div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Satisfaction</div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: satisfaction >= 70 ? '#22c55e' : satisfaction >= 40 ? '#eab308' : '#ef4444' }}>{satisfaction}%</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={labelStyle}>Thumbs Distribution</div>
+          <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+            <span style={{ fontSize: 14 }}>👍 <b style={{ color: '#22c55e' }}>{thumbsUp}</b></span>
+            <span style={{ fontSize: 14 }}>👌 <b style={{ color: '#eab308' }}>{thumbsOk}</b></span>
+            <span style={{ fontSize: 14 }}>👎 <b style={{ color: '#ef4444' }}>{thumbsDown}</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+        {/* Top Issues */}
+        <div style={cardStyle}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#fff' }}>Top Issues Reported</div>
+          {sortedIssues.length === 0 ? (
+            <div style={{ fontSize: 13, color: '#666' }}>No issues reported yet</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {sortedIssues.slice(0, 8).map(([issue, count]) => (
+                <div key={issue} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: '#ccc' }}>{issue}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: Math.min(count / (sortedIssues[0]?.[1] || 1) * 80, 80), height: 6, borderRadius: 3, background: '#ef4444' }} />
+                    <span style={{ fontSize: 12, color: '#888', minWidth: 20, textAlign: 'right' }}>{count}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* By Category */}
+        <div style={cardStyle}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#fff' }}>Quality by Category</div>
+          {Object.keys(catStats).length === 0 ? (
+            <div style={{ fontSize: 13, color: '#666' }}>No data yet</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {Object.entries(catStats).map(([cat, s]) => {
+                const avg = (s.sum / s.total).toFixed(1);
+                return (
+                  <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 13, color: '#ccc', textTransform: 'capitalize' }}>{cat.replace(/_/g, ' ')}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 60, height: 6, borderRadius: 3, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                        <div style={{ width: `${(Number(avg) / 5) * 100}%`, height: '100%', borderRadius: 3, background: Number(avg) >= 4 ? '#22c55e' : Number(avg) >= 3 ? '#eab308' : '#ef4444' }} />
+                      </div>
+                      <span style={{ fontSize: 12, color: '#888', minWidth: 40, textAlign: 'right' }}>{avg}/5 ({s.total})</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* By skin tone */}
+      <div style={{ ...cardStyle, marginBottom: 24 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#fff' }}>Quality by Skin Tone</div>
+        {Object.keys(skinStats).length === 0 ? (
+          <div style={{ fontSize: 13, color: '#666' }}>No data yet — ratings will appear as customers use the system.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+            {Object.entries(skinStats).map(([tone, s]) => {
+              const avg = (s.sum / s.total).toFixed(1);
+              return (
+                <div key={tone} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '12px 16px' }}>
+                  <div style={{ fontSize: 12, color: '#888', textTransform: 'capitalize', marginBottom: 4 }}>{tone.replace(/-/g, ' ')}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: Number(avg) >= 4 ? '#22c55e' : Number(avg) >= 3 ? '#eab308' : '#ef4444' }}>{avg}<span style={{ fontSize: 12, color: '#666' }}>/5</span></div>
+                  <div style={{ fontSize: 11, color: '#666' }}>{s.total} ratings</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Recent ratings table */}
+      <div style={cardStyle}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#fff' }}>Recent Ratings</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                {['Time', 'Thumbs', 'Rating', 'Category', 'Skin Tone', 'Issues', 'Prompt'].map(h => (
+                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: '#888', textTransform: 'uppercase', fontSize: 10 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ratings.slice(0, 20).map(r => (
+                <tr key={r.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                  <td style={{ padding: '8px 12px', color: '#888' }}>{new Date(r.created_at).toLocaleString()}</td>
+                  <td style={{ padding: '8px 12px' }}>
+                    <span style={{ fontSize: 16 }}>{r.thumbs === 'up' ? '👍' : r.thumbs === 'ok' ? '👌' : '👎'}</span>
+                  </td>
+                  <td style={{ padding: '8px 12px', fontWeight: 600, color: r.rating >= 4 ? '#22c55e' : r.rating >= 3 ? '#eab308' : '#ef4444' }}>{r.rating}/5</td>
+                  <td style={{ padding: '8px 12px', color: '#ccc', textTransform: 'capitalize' }}>{(r.garment_category || '—').replace(/_/g, ' ')}</td>
+                  <td style={{ padding: '8px 12px', color: '#ccc', textTransform: 'capitalize' }}>{(r.customer_profile?.skin_tone || '—').replace(/-/g, ' ')}</td>
+                  <td style={{ padding: '8px 12px' }}>
+                    {(r.issues || []).map(i => (
+                      <span key={i} style={{ display: 'inline-block', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: 4, padding: '2px 6px', marginRight: 4, fontSize: 10 }}>{i}</span>
+                    ))}
+                  </td>
+                  <td style={{ padding: '8px 12px', color: '#888', fontSize: 10 }}>{r.prompt_version || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Prompts Tab ─────────────────────────────────────────────────────────────
+
+interface PromptVersion {
+  id: string;
+  prompt_key: string;
+  version: string;
+  prompt: string;
+  description: string | null;
+  is_active: boolean;
+  traffic_weight: number;
+  total_uses: number;
+  avg_rating: number | null;
+  created_at: string;
+  updated_at: string;
+}
 
 function PromptsTab() {
   const [prompts, setPrompts] = useState<PromptRow[]>([]);
+  const [versions, setVersions] = useState<PromptVersion[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'legacy' | 'adaptive'>('adaptive');
 
-  useEffect(() => { fetchPrompts(); }, []);
+  useEffect(() => { fetchPrompts(); fetchVersions(); }, []);
 
   const fetchPrompts = async () => {
     try {
@@ -620,7 +839,14 @@ function PromptsTab() {
     } catch {}
   };
 
-  const startEdit = (p: PromptRow) => { setEditing(p.key); setEditValue(p.prompt); setStatus(null); };
+  const fetchVersions = async () => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_prompt_versions?select=*&order=prompt_key,version`, { headers: hdrs });
+      if (res.ok) setVersions(await res.json());
+    } catch {}
+  };
+
+  const startEdit = (key: string, prompt: string) => { setEditing(key); setEditValue(prompt); setStatus(null); };
   const cancelEdit = () => { setEditing(null); setEditValue(''); setStatus(null); };
 
   const savePrompt = async (key: string) => {
@@ -631,24 +857,95 @@ function PromptsTab() {
         headers: { ...hdrs, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
         body: JSON.stringify({ prompt: editValue, updated_at: new Date().toISOString() }),
       });
-      if (res.ok) { setStatus('Saved! Changes will apply to new generations.'); setEditing(null); fetchPrompts(); }
+      if (res.ok) { setStatus('Saved!'); setEditing(null); fetchPrompts(); }
       else setStatus(`Error saving: ${res.status}`);
     } catch (e) { setStatus(`Error: ${e}`); }
     setSaving(false);
   };
 
-  const labelMap: Record<string, string> = {
-    vto_3image: 'VTO Image Generation (3-image flow)',
-    vto_2image: 'VTO Image Generation (2-image flow)',
-    video: 'Video Generation (Veo 3 Fast)',
-    measurements: 'Body Measurements Extraction',
+  const saveVersion = async (id: string) => {
+    setSaving(true); setStatus(null);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/vto_prompt_versions?id=eq.${id}`, {
+        method: 'PATCH',
+        headers: { ...hdrs, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ prompt: editValue, updated_at: new Date().toISOString() }),
+      });
+      if (res.ok) { setStatus('Saved!'); setEditing(null); fetchVersions(); }
+      else setStatus(`Error: ${res.status}`);
+    } catch (e) { setStatus(`Error: ${e}`); }
+    setSaving(false);
   };
+
+  const toggleVersionActive = async (v: PromptVersion) => {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/vto_prompt_versions?id=eq.${v.id}`, {
+        method: 'PATCH',
+        headers: { ...hdrs, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ is_active: !v.is_active }),
+      });
+      fetchVersions();
+    } catch {}
+  };
+
+  const updateWeight = async (v: PromptVersion, weight: number) => {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/vto_prompt_versions?id=eq.${v.id}`, {
+        method: 'PATCH',
+        headers: { ...hdrs, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify({ traffic_weight: weight }),
+      });
+      fetchVersions();
+    } catch {}
+  };
+
+  const labelMap: Record<string, string> = {
+    vto_3image: 'VTO Image (3-image flow)',
+    vto_2image: 'VTO Image (2-image flow)',
+    video: 'Video Generation',
+    measurements: 'Body Measurements',
+    profile_detect: 'Customer Profile Detection',
+    vto_western_upper: 'Western Topwear',
+    vto_western_lower: 'Western Bottomwear',
+    vto_ethnic: 'Indian Ethnic Wear',
+    vto_footwear: 'Footwear',
+    measurements_male: 'Measurements (Male)',
+    measurements_female: 'Measurements (Female)',
+    video_ethnic: 'Video (Ethnic)',
+    video_western: 'Video (Western)',
+  };
+
+  // Group versions by prompt_key
+  const groupedVersions: Record<string, PromptVersion[]> = {};
+  versions.forEach(v => {
+    if (!groupedVersions[v.prompt_key]) groupedVersions[v.prompt_key] = [];
+    groupedVersions[v.prompt_key].push(v);
+  });
+
+  const VARIABLES_REF = '{gender}, {age_range}, {skin_tone}, {skin_undertone}, {body_type}, {hair}, {distinctive_features}, {ethnicity_region}, {categoryLabel}, {garmentDescription}';
 
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 20 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Prompt Management</h2>
-        <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Edit prompts used by the VTO pipeline. Changes apply immediately to new generations.</p>
+      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0, marginBottom: 4 }}>Prompt Management</h2>
+          <p style={{ fontSize: 13, color: '#888', margin: 0 }}>Edit prompts used by the VTO pipeline. Adaptive prompts use customer profile variables for personalized results.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => setViewMode('adaptive')} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer',
+            background: viewMode === 'adaptive' ? 'rgba(255,255,255,0.1)' : 'transparent', color: viewMode === 'adaptive' ? '#fff' : '#888',
+          }}>Adaptive (A/B)</button>
+          <button onClick={() => setViewMode('legacy')} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer',
+            background: viewMode === 'legacy' ? 'rgba(255,255,255,0.1)' : 'transparent', color: viewMode === 'legacy' ? '#fff' : '#888',
+          }}>Legacy</button>
+        </div>
+      </div>
+
+      {/* Available variables reference */}
+      <div style={{ marginBottom: 16, padding: '10px 16px', borderRadius: 8, fontSize: 12, background: 'rgba(59,130,246,0.08)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.15)' }}>
+        <b>Available variables:</b> {VARIABLES_REF}
       </div>
 
       {status && (
@@ -657,43 +954,110 @@ function PromptsTab() {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {prompts.map(p => (
-          <div key={p.key} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{labelMap[p.key] || p.key}</div>
-                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{p.description} — last updated {new Date(p.updated_at).toLocaleString()}</div>
+      {viewMode === 'adaptive' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {Object.entries(groupedVersions).map(([key, vers]) => (
+            <div key={key} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{labelMap[key] || key}</div>
+                <div style={{ fontSize: 11, color: '#666', marginTop: 2 }}>{vers.length} version{vers.length > 1 ? 's' : ''} — A/B testing {vers.filter(v => v.is_active).length > 1 ? 'active' : 'single version'}</div>
               </div>
-              {editing !== p.key && (
-                <button onClick={() => startEdit(p)} style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: '#ccc', cursor: 'pointer' }}>
-                  Edit
-                </button>
+              {vers.map(v => (
+                <div key={v.id} style={{ padding: '12px 20px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#ccc' }}>{v.version}</span>
+                      <span style={{
+                        fontSize: 10, padding: '2px 8px', borderRadius: 4,
+                        background: v.is_active ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.05)',
+                        color: v.is_active ? '#22c55e' : '#666',
+                      }}>{v.is_active ? 'Active' : 'Inactive'}</span>
+                      {v.avg_rating != null && (
+                        <span style={{ fontSize: 11, color: v.avg_rating >= 4 ? '#22c55e' : v.avg_rating >= 3 ? '#eab308' : '#ef4444' }}>
+                          ★ {v.avg_rating.toFixed(1)} ({v.total_uses} uses)
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <label style={{ fontSize: 11, color: '#666' }}>Weight:</label>
+                      <input
+                        type="number" min={0} max={100} value={v.traffic_weight}
+                        onChange={e => updateWeight(v, Number(e.target.value))}
+                        style={{ width: 50, padding: '3px 6px', borderRadius: 4, fontSize: 12, background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#ccc', textAlign: 'center' }}
+                      />
+                      <button onClick={() => toggleVersionActive(v)} style={{
+                        padding: '4px 10px', borderRadius: 6, fontSize: 11, border: '1px solid rgba(255,255,255,0.1)',
+                        background: 'transparent', color: v.is_active ? '#ef4444' : '#22c55e', cursor: 'pointer',
+                      }}>{v.is_active ? 'Disable' : 'Enable'}</button>
+                      <button onClick={() => startEdit(v.id, v.prompt)} style={{
+                        padding: '4px 10px', borderRadius: 6, fontSize: 11, border: '1px solid rgba(255,255,255,0.15)',
+                        background: 'rgba(255,255,255,0.05)', color: '#ccc', cursor: 'pointer',
+                      }}>Edit</button>
+                    </div>
+                  </div>
+                  {editing === v.id ? (
+                    <div>
+                      <textarea value={editValue} onChange={e => setEditValue(e.target.value)} style={{
+                        width: '100%', minHeight: 200, padding: 12, borderRadius: 8, fontSize: 12, lineHeight: 1.6,
+                        fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                        color: '#e5e5e5', resize: 'vertical', outline: 'none', boxSizing: 'border-box',
+                      }} />
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={cancelEdit} style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#888', cursor: 'pointer' }}>Cancel</button>
+                        <button onClick={() => saveVersion(v.id)} disabled={saving || editValue === v.prompt} style={{
+                          padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, border: 'none', cursor: saving ? 'wait' : 'pointer',
+                          background: editValue === v.prompt ? 'rgba(255,255,255,0.05)' : '#22c55e', color: editValue === v.prompt ? '#666' : '#000',
+                        }}>{saving ? 'Saving...' : 'Save'}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre style={{ fontSize: 11, lineHeight: 1.5, color: '#888', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace', maxHeight: 120, overflow: 'auto' }}>{v.prompt}</pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Legacy prompts view */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {prompts.map(p => (
+            <div key={p.key} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{labelMap[p.key] || p.key}</div>
+                  <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>{p.description} — last updated {new Date(p.updated_at).toLocaleString()}</div>
+                </div>
+                {editing !== p.key && (
+                  <button onClick={() => startEdit(p.key, p.prompt)} style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: '#ccc', cursor: 'pointer' }}>
+                    Edit
+                  </button>
+                )}
+              </div>
+              {editing === p.key ? (
+                <div style={{ padding: 16 }}>
+                  <textarea value={editValue} onChange={e => setEditValue(e.target.value)} style={{
+                    width: '100%', minHeight: 240, padding: 14, borderRadius: 8, fontSize: 13, lineHeight: 1.6,
+                    fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#e5e5e5', resize: 'vertical', outline: 'none', boxSizing: 'border-box',
+                  }} />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+                    <button onClick={cancelEdit} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#888', cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={() => savePrompt(p.key)} disabled={saving || editValue === p.prompt} style={{
+                      padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: saving ? 'wait' : 'pointer',
+                      background: editValue === p.prompt ? 'rgba(255,255,255,0.05)' : '#22c55e', color: editValue === p.prompt ? '#666' : '#000',
+                    }}>{saving ? 'Saving...' : 'Save'}</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: '12px 20px', maxHeight: 180, overflow: 'auto' }}>
+                  <pre style={{ fontSize: 12, lineHeight: 1.6, color: '#999', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>{p.prompt}</pre>
+                </div>
               )}
             </div>
-            {editing === p.key ? (
-              <div style={{ padding: 16 }}>
-                <textarea value={editValue} onChange={e => setEditValue(e.target.value)} style={{
-                  width: '100%', minHeight: 240, padding: 14, borderRadius: 8, fontSize: 13, lineHeight: 1.6,
-                  fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',
-                  color: '#e5e5e5', resize: 'vertical', outline: 'none', boxSizing: 'border-box',
-                }} />
-                <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-                  <button onClick={cancelEdit} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: '#888', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => savePrompt(p.key)} disabled={saving || editValue === p.prompt} style={{
-                    padding: '8px 20px', borderRadius: 8, fontSize: 13, fontWeight: 600, border: 'none', cursor: saving ? 'wait' : 'pointer',
-                    background: editValue === p.prompt ? 'rgba(255,255,255,0.05)' : '#22c55e', color: editValue === p.prompt ? '#666' : '#000',
-                  }}>{saving ? 'Saving...' : 'Save'}</button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ padding: '12px 20px', maxHeight: 180, overflow: 'auto' }}>
-                <pre style={{ fontSize: 12, lineHeight: 1.6, color: '#999', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontFamily: 'monospace' }}>{p.prompt}</pre>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

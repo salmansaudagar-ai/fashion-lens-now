@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useVTO } from '@/contexts/VTOContext';
-import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy, Plus, ShoppingBag, X } from 'lucide-react';
+import { RefreshCw, Shirt, Download, Bell, ArrowRight, Sparkles, Video, Image as ImageIcon, Loader2, User, CheckCircle2, Ruler, Trophy, Plus, ShoppingBag, X, ThumbsUp, ThumbsDown, Minus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -44,6 +44,37 @@ export const VirtualLookStep: React.FC = () => {
   // Body measurements
   const [measurements, setMeasurements] = useState<BodyMeasurements | null>(null);
   const [measuringInProgress, setMeasuringInProgress] = useState(false);
+
+  // Rating system
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [selectedThumbs, setSelectedThumbs] = useState<'up' | 'ok' | 'down' | null>(null);
+  const [selectedIssues, setSelectedIssues] = useState<string[]>([]);
+  const ISSUE_TAGS = ['Face changed', 'Wrong skin tone', 'Bad fit', 'Unrealistic', 'Missing detail', 'Wrong color'];
+
+  const submitRating = async (thumbs: 'up' | 'ok' | 'down') => {
+    setSelectedThumbs(thumbs);
+    const ratingMap = { up: 5, ok: 3, down: 1 };
+    try {
+      await supabase.from('vto_ratings').insert({
+        session_id: sessionId,
+        rating_type: 'image',
+        rating: ratingMap[thumbs],
+        thumbs,
+        issues: selectedIssues.length > 0 ? selectedIssues : null,
+        prompt_key: null,
+        prompt_version: null,
+        garment_category: selectedOutfit.topwear?.category || selectedOutfit.bottomwear?.category || selectedOutfit.footwear?.category || null,
+      });
+      setRatingSubmitted(true);
+      toast.success(thumbs === 'up' ? 'Glad you liked it!' : thumbs === 'ok' ? 'Thanks for the feedback!' : 'Sorry about that — we\'ll improve!');
+    } catch (e) {
+      console.error('Rating submit failed:', e);
+    }
+  };
+
+  const toggleIssue = (issue: string) => {
+    setSelectedIssues(prev => prev.includes(issue) ? prev.filter(i => i !== issue) : [...prev, issue]);
+  };
 
   // Load model comparison info from localStorage (with sessionStorage fallback)
   useEffect(() => {
@@ -536,6 +567,63 @@ export const VirtualLookStep: React.FC = () => {
             <div className="glass-card-elevated rounded-3xl p-4 glow-champagne">
               {renderMediaContent()}
             </div>
+
+            {/* Rating Widget */}
+            {generatedLook && !ratingSubmitted && (
+              <div className="mt-3 glass-card rounded-2xl p-4 space-y-3">
+                <p className="text-sm font-medium text-foreground text-center">How does this look?</p>
+                <div className="flex items-center justify-center gap-4">
+                  <button
+                    onClick={() => submitRating('up')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      selectedThumbs === 'up' ? 'bg-green-500/20 text-green-500 ring-2 ring-green-500/30' : 'bg-secondary/50 text-muted-foreground hover:bg-green-500/10 hover:text-green-500'
+                    }`}
+                  >
+                    <ThumbsUp className="w-4 h-4" /> Great
+                  </button>
+                  <button
+                    onClick={() => submitRating('ok')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      selectedThumbs === 'ok' ? 'bg-yellow-500/20 text-yellow-500 ring-2 ring-yellow-500/30' : 'bg-secondary/50 text-muted-foreground hover:bg-yellow-500/10 hover:text-yellow-500'
+                    }`}
+                  >
+                    <Minus className="w-4 h-4" /> Okay
+                  </button>
+                  <button
+                    onClick={() => submitRating('down')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      selectedThumbs === 'down' ? 'bg-red-500/20 text-red-500 ring-2 ring-red-500/30' : 'bg-secondary/50 text-muted-foreground hover:bg-red-500/10 hover:text-red-500'
+                    }`}
+                  >
+                    <ThumbsDown className="w-4 h-4" /> Poor
+                  </button>
+                </div>
+                {/* Issue tags — show after thumbs down or ok */}
+                {(selectedThumbs === 'down' || selectedThumbs === 'ok') && !ratingSubmitted && (
+                  <div className="flex flex-wrap gap-2 justify-center pt-1">
+                    {ISSUE_TAGS.map(tag => (
+                      <button
+                        key={tag}
+                        onClick={() => toggleIssue(tag)}
+                        className={`px-3 py-1 rounded-full text-xs transition-all ${
+                          selectedIssues.includes(tag)
+                            ? 'bg-primary/20 text-primary ring-1 ring-primary/30'
+                            : 'bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {ratingSubmitted && (
+              <div className="mt-3 glass-card rounded-2xl p-3 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="w-4 h-4 text-green-500" />
+                Thanks for your feedback!
+              </div>
+            )}
           </div>
 
           {/* Actions Sidebar */}

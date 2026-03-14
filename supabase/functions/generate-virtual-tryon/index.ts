@@ -90,48 +90,129 @@ async function getGcpAccessToken(saJson: string): Promise<string> {
   return access_token;
 }
 
-// ── Gemini Body Measurements ─────────────────────────────────
+// ── Customer Profile Detection ──────────────────────────────
+
+interface CustomerProfile {
+  gender: string;
+  age_range: string;
+  skin_tone: string;
+  skin_undertone: string;
+  body_type: string;
+  hair: string;
+  distinctive_features: string;
+  ethnicity_region: string;
+}
+
+const DEFAULT_PROFILE: CustomerProfile = {
+  gender: "unknown",
+  age_range: "25-35",
+  skin_tone: "medium-brown",
+  skin_undertone: "warm",
+  body_type: "average",
+  hair: "dark",
+  distinctive_features: "none",
+  ethnicity_region: "south-asian",
+};
+
+async function detectCustomerProfile(
+  imageBase64: string,
+  accessToken: string,
+  supabase?: any,
+): Promise<CustomerProfile> {
+  const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
+
+  const defaultProfilePrompt = `Analyze this photo and extract the following attributes about this person. Respond with ONLY a JSON object, no markdown or explanation.
+
+{
+  "gender": "<male|female>",
+  "age_range": "<18-25|25-35|35-45|45-55|55+>",
+  "skin_tone": "<very-fair|fair|light-brown|medium-brown|dark-brown|very-dark>",
+  "skin_undertone": "<warm|cool|neutral>",
+  "body_type": "<slim|average|athletic|broad|curvy|plus>",
+  "hair": "<short|medium|long> <dark|brown|light|grey|colored>",
+  "distinctive_features": "<comma-separated list: glasses, beard, moustache, nose ring, bindi, etc. or none>",
+  "ethnicity_region": "<south-asian|southeast-asian|east-asian|middle-eastern|african|caucasian|mixed>"
+}
+
+Be accurate and respectful. Base judgments only on visible features.`;
+
+  const profilePrompt = supabase ? await fetchAdaptivePrompt(supabase, "profile_detect", defaultProfilePrompt) : defaultProfilePrompt;
+
+  try {
+    console.log("[Profile] Detecting customer profile...");
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [
+          { text: profilePrompt },
+          { inlineData: { mimeType: "image/jpeg", data: imageBase64 } },
+        ]}],
+        generationConfig: { temperature: 0.1 },
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn(`[Profile] Gemini error: ${res.status}, using defaults`);
+      return DEFAULT_PROFILE;
+    }
+
+    const data = await res.json();
+    const textParts = data.candidates?.[0]?.content?.parts ?? [];
+    let rawText = "";
+    for (const p of textParts) { if (p.text) rawText += p.text; }
+
+    const jsonStr = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const profile = JSON.parse(jsonStr) as CustomerProfile;
+    console.log("[Profile] Detected:", JSON.stringify(profile));
+    return { ...DEFAULT_PROFILE, ...profile };
+  } catch (e) {
+    console.error("[Profile] Detection failed:", e);
+    return DEFAULT_PROFILE;
+  }
+}
+
+// ── Gemini Body Measurements (gender-aware) ─────────────────
 
 async function extractMeasurements(
   personBase64: string,
   accessToken: string,
+  profile: CustomerProfile,
   supabase?: any,
 ): Promise<Record<string, any>> {
   const url = `https://${GCP_LOCATION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT_ID}/locations/${GCP_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
 
-  const defaultMeasurePrompt = `Analyze this full-body photo and estimate the person's body measurements and recommended clothing size.
+  // Use gender-specific measurement prompt
+  const promptKey = profile.gender === "female" ? "measurements_female" : "measurements_male";
+  const defaultMeasurePrompt = `Analyze this full-body photo and estimate the person's body measurements and recommended clothing size for an Indian retail store.
 
-TASK: Provide approximate body measurements based on visual analysis of this full-body standing photo.
-
-OUTPUT FORMAT: Respond with ONLY a JSON object (no markdown, no explanation) with these fields:
+OUTPUT FORMAT: Respond with ONLY a JSON object (no markdown, no explanation):
 {
-  "height_cm": <estimated height in cm>,
-  "shoulder_width_cm": <shoulder width in cm>,
-  "chest_cm": <chest circumference in cm>,
-  "waist_cm": <waist circumference in cm>,
-  "hip_cm": <hip circumference in cm>,
-  "arm_length_cm": <arm length in cm>,
-  "inseam_cm": <inseam length in cm>,
-  "build": "<slim|average|athletic|broad>",
-  "recommended_size": "<XS|S|M|L|XL|XXL>",
+  "height_cm": <estimated height, use ${profile.gender === "female" ? "152" : "166"} as Indian ${profile.gender} baseline>,
+  "shoulder_width_cm": <shoulder width>,
+  "chest_cm": <chest circumference>,
+  "waist_cm": <waist circumference>,
+  "waist_inches": <waist in inches>,
+  "hip_cm": <hip circumference>,
+  "arm_length_cm": <arm length>,
+  "inseam_cm": <inseam length>,
+  "build": "<slim|average|athletic|broad${profile.gender === "female" ? "|curvy" : ""}>",
+  "recommended_size": "<XS|S|M|L|XL|XXL> based on Indian sizing",
+  "recommended_trouser": "<26|28|30|32|34|36|38|40> waist in inches",
   "confidence": "<low|medium|high>"
-}
+}`;
 
-Important: These are approximate visual estimates. Base them on proportions visible in the photo. If the person appears average height (170cm for men, 160cm for women), use that as a reference point.`;
+  const measurePrompt = supabase ? await fetchAdaptivePrompt(supabase, promptKey, defaultMeasurePrompt) : defaultMeasurePrompt;
 
-  const measurePrompt = supabase ? await fetchPrompt(supabase, "measurements", defaultMeasurePrompt) : defaultMeasurePrompt;
-
-  const parts = [
-    { text: measurePrompt },
-    { inlineData: { mimeType: "image/jpeg", data: personBase64 } },
-  ];
-
-  console.log("[Measurements] Calling Gemini for body analysis...");
+  console.log(`[Measurements] Using ${promptKey} prompt for ${profile.gender} customer`);
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ role: "user", parts }],
+      contents: [{ role: "user", parts: [
+        { text: measurePrompt },
+        { inlineData: { mimeType: "image/jpeg", data: personBase64 } },
+      ]}],
       generationConfig: { temperature: 0.2 },
     }),
   });
@@ -144,11 +225,8 @@ Important: These are approximate visual estimates. Base them on proportions visi
   const data = await res.json();
   const textParts = data.candidates?.[0]?.content?.parts ?? [];
   let rawText = "";
-  for (const p of textParts) {
-    if (p.text) { rawText += p.text; }
-  }
+  for (const p of textParts) { if (p.text) rawText += p.text; }
 
-  // Parse JSON from response (strip markdown code fences if present)
   try {
     const jsonStr = rawText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const measurements = JSON.parse(jsonStr);
@@ -160,16 +238,86 @@ Important: These are approximate visual estimates. Base them on proportions visi
   }
 }
 
-// ── Fetch dynamic prompts from DB ─────────────────────────────
+// ── Fetch adaptive prompts from DB (with A/B versioning) ────
 
-async function fetchPrompt(supabase: any, key: string, fallback: string): Promise<string> {
+interface PromptSelection { prompt: string; version: string; promptKey: string; }
+
+async function fetchAdaptivePrompt(supabase: any, key: string, fallback: string): Promise<string> {
+  // First try versioned prompts (vto_prompt_versions table)
+  try {
+    const { data: versions } = await supabase
+      .from("vto_prompt_versions")
+      .select("version, prompt, traffic_weight")
+      .eq("prompt_key", key)
+      .eq("is_active", true);
+
+    if (versions && versions.length > 0) {
+      // Weighted random selection for A/B testing
+      const totalWeight = versions.reduce((sum: number, v: any) => sum + (v.traffic_weight || 50), 0);
+      let rand = Math.random() * totalWeight;
+      for (const v of versions) {
+        rand -= (v.traffic_weight || 50);
+        if (rand <= 0) return v.prompt;
+      }
+      return versions[0].prompt;
+    }
+  } catch (e) {
+    console.warn(`[Prompt] Failed to fetch versioned prompt '${key}'`);
+  }
+
+  // Fallback to legacy vto_prompts table
   try {
     const { data } = await supabase.from("vto_prompts").select("prompt").eq("key", key).single();
     if (data?.prompt) return data.prompt;
   } catch (e) {
-    console.warn(`[Prompt] Failed to fetch prompt '${key}', using fallback`);
+    console.warn(`[Prompt] Failed to fetch legacy prompt '${key}', using fallback`);
   }
   return fallback;
+}
+
+async function fetchAdaptivePromptWithMeta(supabase: any, key: string, fallback: string): Promise<PromptSelection> {
+  try {
+    const { data: versions } = await supabase
+      .from("vto_prompt_versions")
+      .select("version, prompt, traffic_weight")
+      .eq("prompt_key", key)
+      .eq("is_active", true);
+
+    if (versions && versions.length > 0) {
+      const totalWeight = versions.reduce((sum: number, v: any) => sum + (v.traffic_weight || 50), 0);
+      let rand = Math.random() * totalWeight;
+      for (const v of versions) {
+        rand -= (v.traffic_weight || 50);
+        if (rand <= 0) return { prompt: v.prompt, version: v.version, promptKey: key };
+      }
+      return { prompt: versions[0].prompt, version: versions[0].version, promptKey: key };
+    }
+  } catch (e) { /* fallthrough */ }
+
+  try {
+    const { data } = await supabase.from("vto_prompts").select("prompt").eq("key", key).single();
+    if (data?.prompt) return { prompt: data.prompt, version: "legacy", promptKey: key };
+  } catch (e) { /* fallthrough */ }
+
+  return { prompt: fallback, version: "default", promptKey: key };
+}
+
+/** Interpolate profile variables into prompt template */
+function interpolatePrompt(template: string, profile: CustomerProfile, extras: Record<string, string> = {}): string {
+  let result = template;
+  for (const [key, value] of Object.entries(profile)) {
+    result = result.replace(new RegExp(`\\{${key}\\}`, "g"), value);
+  }
+  for (const [key, value] of Object.entries(extras)) {
+    result = result.replace(new RegExp(`\\{${key}\\}`, "g"), value);
+  }
+  return result;
+}
+
+// ── Legacy prompt fetch (backward compat) ────────────────────
+
+async function fetchPrompt(supabase: any, key: string, fallback: string): Promise<string> {
+  return fetchAdaptivePrompt(supabase, key, fallback);
 }
 
 // ── Gemini VTO ───────────────────────────────────────────────
@@ -180,76 +328,85 @@ async function runGeminiVTO(
   garmentDescription: string,
   category: string,
   accessToken: string,
+  profile: CustomerProfile,
   selfieBase64?: string,
   supabase?: any,
-): Promise<{ imageBase64: string; durationMs: number }> {
+): Promise<{ imageBase64: string; durationMs: number; promptVersion: string; promptKey: string }> {
   const start = Date.now();
 
-  // Build prompt based on available images
   const categoryLabel = category === "upper_body" ? "upper body top/shirt" :
     category === "lower_body" ? "lower body pants/skirt" : "full dress/outfit";
-
   const descSuffix = garmentDescription ? `Description: ${garmentDescription}.` : "";
+
+  // Select the right prompt key based on category (adaptive)
+  let promptKey = "vto_western_upper"; // default
+  if (category === "lower_body") promptKey = "vto_western_lower";
+  else if (category === "dresses") promptKey = "vto_ethnic";
+  // TODO: detect ethnic vs western from garment description in the future
 
   const parts: any[] = [];
 
-  if (selfieBase64) {
-    // 3-image flow: selfie (face) + full-body (body type) + garment
-    const defaultPrompt3 = `You are a professional virtual try-on system. Replace ONLY the {categoryLabel} on the person with the garment shown, producing a photorealistic result.
+  // Try to fetch adaptive prompt, fallback to legacy
+  const { prompt: adaptivePrompt, version: promptVersion, promptKey: usedKey } = supabase
+    ? await fetchAdaptivePromptWithMeta(supabase, promptKey, "")
+    : { prompt: "", version: "default", promptKey };
 
-CRITICAL FACE PRESERVATION RULES:
-- The person's face must be an EXACT pixel-level copy from Image 1. Do NOT regenerate, smooth, stylize, or "enhance" the face in any way.
-- Preserve every facial detail: skin texture, pores, blemishes, moles, wrinkles, facial hair, exact eye shape and color, nose shape, lip shape and color, eyebrow shape.
-- Preserve exact skin tone — do NOT lighten, darken, or change the hue of the skin.
-- Preserve exact hair: style, color, texture, flyaways. Do NOT restyle, smooth, or change hair.
-- If the person wears glasses, preserve them exactly.
-- The face should look like an untouched photograph, NOT like a rendered/AI image.
-
-INPUTS:
-- Image 1 (SELFIE): The person's face reference — copy this face EXACTLY as-is.
-- Image 2 (FULL BODY): The person's body — use for body shape, height, posture, stance.
-- Image 3 (GARMENT): The {categoryLabel} to dress the person in. {garmentDescription}
-
-OUTPUT RULES:
-- Full-body standing photo, head to toe
-- ONLY replace the {categoryLabel} — keep all other clothing, accessories, shoes unchanged from Image 2
-- Garment must have correct colors, patterns, fabric texture, logos, and natural draping/fit on this body
-- Natural studio lighting, clean background
-- Output one photorealistic image`;
-    const rawPrompt = supabase ? await fetchPrompt(supabase, "vto_3image", defaultPrompt3) : defaultPrompt3;
-    const promptText = rawPrompt
-      .replace(/\{categoryLabel\}/g, categoryLabel)
-      .replace(/\{garmentDescription\}/g, descSuffix);
+  if (adaptivePrompt && selfieBase64) {
+    // Adaptive 3-image flow with profile variables
+    const promptText = interpolatePrompt(adaptivePrompt, profile, {
+      categoryLabel, garmentDescription: descSuffix,
+    });
     parts.push({ text: promptText });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: selfieBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
-  } else {
-    // 2-image flow: full-body + garment
-    const defaultPrompt2 = `You are a professional virtual try-on system. Replace ONLY the {categoryLabel} on the person with the garment shown, producing a photorealistic result.
+    console.log(`[Gemini VTO] Using adaptive prompt: ${usedKey} ${promptVersion}`);
+  } else if (adaptivePrompt) {
+    // Adaptive 2-image flow
+    const promptText = interpolatePrompt(adaptivePrompt, profile, {
+      categoryLabel, garmentDescription: descSuffix,
+    });
+    parts.push({ text: promptText });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
+    console.log(`[Gemini VTO] Using adaptive prompt: ${usedKey} ${promptVersion} (2-image)`);
+  } else if (selfieBase64) {
+    // Legacy 3-image fallback
+    const defaultPrompt3 = `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
 
 CRITICAL FACE PRESERVATION RULES:
-- The person's face must be an EXACT copy from the input photo. Do NOT regenerate, smooth, stylize, or "enhance" the face.
+- The person's face must be an EXACT pixel-level copy from Image 1. Do NOT regenerate, smooth, stylize, or "enhance" the face.
 - Preserve every facial detail: skin texture, pores, blemishes, moles, wrinkles, facial hair, exact eye shape and color.
-- Preserve exact skin tone — do NOT lighten, darken, or change skin color.
-- Preserve exact hair: style, color, texture. Do NOT restyle or smooth hair.
+- Preserve exact skin tone — do NOT lighten, darken, or change the hue of the skin.
+- Preserve exact hair: style, color, texture, flyaways.
 - The face should look like an untouched photograph, NOT an AI rendering.
 
 INPUTS:
-- Image 1 (PERSON): The person wearing their current clothes. Copy their face and identity EXACTLY.
-- Image 2 (GARMENT): The {categoryLabel} to dress the person in. {garmentDescription}
+- Image 1 (SELFIE): The person's face reference — copy EXACTLY.
+- Image 2 (FULL BODY): The person's body shape, posture, stance.
+- Image 3 (GARMENT): The ${categoryLabel} to dress them in. ${descSuffix}
 
-OUTPUT RULES:
-- Full-body standing photo, head to toe
-- ONLY replace the {categoryLabel} — keep all other clothing, accessories, shoes unchanged
-- Garment must have correct colors, patterns, fabric texture, and natural draping/fit
-- Natural studio lighting, clean background
-- Output one photorealistic image`;
+OUTPUT: Full-body photo, head to toe. ONLY replace the ${categoryLabel}. Photorealistic.`;
+    const rawPrompt = supabase ? await fetchPrompt(supabase, "vto_3image", defaultPrompt3) : defaultPrompt3;
+    parts.push({ text: rawPrompt });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: selfieBase64 } });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
+    parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
+  } else {
+    // Legacy 2-image fallback
+    const defaultPrompt2 = `You are a professional virtual try-on system. Replace ONLY the ${categoryLabel} on the person with the garment shown, producing a photorealistic result.
+
+CRITICAL RULES:
+- Face must be an EXACT copy. Do NOT alter the face.
+- Preserve exact skin tone, hair, and all details.
+
+INPUTS:
+- Image 1 (PERSON): Current photo. Copy face and identity EXACTLY.
+- Image 2 (GARMENT): The ${categoryLabel} to dress them in. ${descSuffix}
+
+OUTPUT: Full-body photo, head to toe. ONLY replace ${categoryLabel}. Photorealistic.`;
     const rawPrompt = supabase ? await fetchPrompt(supabase, "vto_2image", defaultPrompt2) : defaultPrompt2;
-    const promptText = rawPrompt
-      .replace(/\{categoryLabel\}/g, categoryLabel)
-      .replace(/\{garmentDescription\}/g, descSuffix);
-    parts.push({ text: promptText });
+    parts.push({ text: rawPrompt });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: personBase64 } });
     parts.push({ inlineData: { mimeType: "image/jpeg", data: garmentBase64 } });
   }
@@ -315,7 +472,7 @@ OUTPUT RULES:
 
     const durationMs = Date.now() - start;
     console.log(`[Gemini VTO] Success in ${durationMs}ms (attempt ${attempt + 1})`);
-    return { imageBase64: resultB64, durationMs };
+    return { imageBase64: resultB64, durationMs, promptVersion: promptVersion ?? "default", promptKey: usedKey ?? promptKey };
   }
 
   throw new Error("Gemini VTO failed after all retries");
@@ -345,7 +502,7 @@ serve(async (req) => {
     // Validate session
     const { data: session, error: sessionError } = await supabase
       .from("vto_sessions")
-      .select("id, created_at, generation_count")
+      .select("id, created_at, generation_count, customer_profile")
       .eq("session_token", sessionToken)
       .single();
 
@@ -411,14 +568,25 @@ serve(async (req) => {
     const garmentRawB64 = stripDataUrlPrefix(garmentDataUrl);
     const selfieRawB64 = selfieImage ? stripDataUrlPrefix(selfieImage) : undefined;
 
-    // Get GCP access token ONCE and reuse for both VTO and measurements
+    // Get GCP access token ONCE and reuse for all Gemini calls
     const saJson = Deno.env.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON");
     if (!saJson) throw new Error("GCP service account not configured");
     const accessToken = await getGcpAccessToken(saJson);
 
+    // ── Customer profile detection (reuse from session if already done) ──
+    let profile: CustomerProfile;
+    if (session.customer_profile && typeof session.customer_profile === "object" && session.customer_profile.gender) {
+      profile = session.customer_profile as CustomerProfile;
+      console.log(`[VTO] Reusing existing profile: ${profile.gender}, ${profile.skin_tone}`);
+    } else {
+      const profileImage = selfieRawB64 || personRawB64;
+      profile = await detectCustomerProfile(profileImage, accessToken, supabase);
+      console.log(`[VTO] Detected new profile: ${profile.gender}, ${profile.skin_tone}, ${profile.body_type}`);
+    }
+
     // Run Gemini VTO and measurements IN PARALLEL to save time
-    const vtoPromise = runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, accessToken, selfieRawB64, supabase);
-    const measurePromise = extractMeasurements(personRawB64, accessToken, supabase).catch((e) => {
+    const vtoPromise = runGeminiVTO(personRawB64, garmentRawB64, garmentDescription, category, accessToken, profile, selfieRawB64, supabase);
+    const measurePromise = extractMeasurements(personRawB64, accessToken, profile, supabase).catch((e) => {
       console.error("[VTO] Measurement extraction failed:", e);
       return {} as Record<string, any>;
     });
@@ -497,7 +665,7 @@ serve(async (req) => {
       generatedAt: new Date().toISOString(),
     };
 
-    // Update session in one atomic write (include measurements)
+    // Update session in one atomic write (include measurements + profile + prompt version)
     await supabase
       .from("vto_sessions")
       .update({
@@ -507,6 +675,8 @@ serve(async (req) => {
         model_comparison_data: modelComparisonData,
         body_measurements: Object.keys(measurements).length > 0 ? measurements : null,
         registration_status: "registered",
+        customer_profile: profile,
+        prompt_version: result.promptVersion ? `${result.promptKey}:${result.promptVersion}` : null,
       })
       .eq("id", session.id);
 
@@ -528,6 +698,8 @@ serve(async (req) => {
           imageUrl,
         }],
         measurements,
+        customerProfile: profile,
+        promptVersion: result.promptVersion ? `${result.promptKey}:${result.promptVersion}` : null,
         videoGenerating: true,
         generationsRemaining: MAX_GENERATIONS_PER_SESSION - session.generation_count - 1,
       }),
