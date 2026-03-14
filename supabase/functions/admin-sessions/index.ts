@@ -60,7 +60,8 @@ serve(async (req) => {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      // Delete generations first (foreign key constraint)
+      // Delete all dependent records first (foreign key constraints)
+      await supabase.from('vto_training_data').delete().eq('session_id', session_id);
       await supabase.from('vto_generations').delete().eq('session_id', session_id);
       // Then delete session
       const { error } = await supabase.from('vto_sessions').delete().eq('id', session_id);

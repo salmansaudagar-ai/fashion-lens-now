@@ -273,7 +273,7 @@ function DashboardContent() {
 
         <div className="flex-1 overflow-y-auto bg-slate-50">
           {activeNav === 'overview' && <OverviewTab sessions={sessions} allSessions={allSessions} totalCount={totalCount} health={health} />}
-          {activeNav === 'tryons' && <TryOnsTab allSessions={allSessions} totalCount={totalCount} />}
+          {activeNav === 'tryons' && <TryOnsTab allSessions={allSessions} totalCount={totalCount} onRefresh={() => { fetchSessions(); fetchAllSessions(); }} />}
           {activeNav === 'analytics' && <AnalyticsTab allSessions={allSessions} />}
           {activeNav === 'catalog' && <CatalogTabInline />}
           {activeNav === 'prompts' && <PromptsTab />}
@@ -535,14 +535,56 @@ function OverviewTab({ sessions, allSessions, totalCount, health }: {
 // ═══════════════════════════════════════════════════════════════
 // ██ TRY-ONS TAB
 // ═══════════════════════════════════════════════════════════════
-function TryOnsTab({ allSessions, totalCount }: { allSessions: Session[]; totalCount: number }) {
+function TryOnsTab({ allSessions, totalCount, onRefresh }: { allSessions: Session[]; totalCount: number; onRefresh?: () => void }) {
   const [view, setView] = useState<'generations' | 'sessions'>('generations');
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [genLoading, setGenLoading] = useState(false);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [page, setPage] = useState(0);
   const [pagedSessions, setPagedSessions] = useState<Session[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const PAGE_SIZE = 20;
+  const pin = sessionStorage.getItem('trends_admin_pin') || '';
+
+  const deleteGeneration = async (genId: string) => {
+    if (!confirm('Delete this try-on entry?')) return;
+    setDeletingId(genId);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-sessions`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin },
+        body: JSON.stringify({ action: 'delete_generation', generation_id: genId }),
+      });
+      if (res.ok) {
+        setGenerations(prev => prev.filter(g => g.id !== genId));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete');
+      }
+    } catch { alert('Delete failed'); }
+    setDeletingId(null);
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    if (!confirm('Delete this session and all its generations?')) return;
+    setDeletingId(sessionId);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-sessions`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json', 'x-admin-pin': pin },
+        body: JSON.stringify({ action: 'delete_session', session_id: sessionId }),
+      });
+      if (res.ok) {
+        if (selectedSession?.id === sessionId) setSelectedSession(null);
+        setPagedSessions(prev => prev.filter(s => s.id !== sessionId));
+        onRefresh?.();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete');
+      }
+    } catch { alert('Delete failed'); }
+    setDeletingId(null);
+  };
 
   useEffect(() => {
     if (view !== 'generations') return;
@@ -588,17 +630,17 @@ function TryOnsTab({ allSessions, totalCount }: { allSessions: Session[]; totalC
           <thead>
             <tr className="bg-slate-50">
               {(view === 'generations'
-                ? ['Time', 'Garment', 'Category', 'VTO Result', 'Video', 'Size', 'Duration', 'Description']
-                : ['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens']
-              ).map(h => (
-                <th key={h} className="text-left px-4 py-3 text-[10px] font-medium text-slate-400 uppercase tracking-wider">{h}</th>
+                ? ['Time', 'Garment', 'Category', 'VTO Result', 'Video', 'Size', 'Duration', 'Description', '']
+                : ['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens', '']
+              ).map((h, i) => (
+                <th key={h || `_del_${i}`} className="text-left px-4 py-3 text-[10px] font-medium text-slate-400 uppercase tracking-wider">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {view === 'generations' ? (
-              genLoading ? <tr><td colSpan={8} className="p-10 text-center text-slate-300">Loading...</td></tr>
-              : generations.length === 0 ? <tr><td colSpan={8} className="p-10 text-center text-slate-300">No try-ons yet</td></tr>
+              genLoading ? <tr><td colSpan={9} className="p-10 text-center text-slate-300">Loading...</td></tr>
+              : generations.length === 0 ? <tr><td colSpan={9} className="p-10 text-center text-slate-300">No try-ons yet</td></tr>
               : generations.map(g => (
                 <tr key={g.id} className="border-t border-slate-50 hover:bg-slate-50/50">
                   <td className="px-4 py-2.5 text-xs text-slate-500">{fmtTime(g.created_at)}</td>
@@ -609,6 +651,13 @@ function TryOnsTab({ allSessions, totalCount }: { allSessions: Session[]; totalC
                   <td className="px-4 py-2.5 text-xs font-medium text-slate-700">{g.body_measurements?.recommended_size || '—'}</td>
                   <td className="px-4 py-2.5 text-xs text-slate-400">{g.duration_ms ? `${(g.duration_ms / 1000).toFixed(1)}s` : '—'}</td>
                   <td className="px-4 py-2.5 text-xs text-slate-400 max-w-[160px] truncate">{g.garment_description || '—'}</td>
+                  <td className="px-4 py-2.5">
+                    <button onClick={() => deleteGeneration(g.id)} disabled={deletingId === g.id}
+                      className="text-red-400 hover:text-red-600 text-xs border border-red-200 rounded px-2 py-0.5 opacity-60 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                      title="Delete">
+                      {deletingId === g.id ? '...' : <Trash2 className="w-3 h-3" />}
+                    </button>
+                  </td>
                 </tr>
               ))
             ) : (
@@ -624,6 +673,13 @@ function TryOnsTab({ allSessions, totalCount }: { allSessions: Session[]; totalC
                   <td className="px-4 py-2.5">{s.generated_video_url ? <span className="text-emerald-600 text-xs font-medium">Yes</span> : <span className="text-slate-300">—</span>}</td>
                   <td className="px-4 py-2.5 text-xs font-medium text-slate-700">{s.body_measurements?.recommended_size || '—'}</td>
                   <td className="px-4 py-2.5 text-xs text-slate-500">{s.generation_count}</td>
+                  <td className="px-4 py-2.5">
+                    <button onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }} disabled={deletingId === s.id}
+                      className="text-red-400 hover:text-red-600 text-xs border border-red-200 rounded px-2 py-0.5 opacity-60 hover:opacity-100 disabled:opacity-30 transition-opacity"
+                      title="Delete session">
+                      {deletingId === s.id ? '...' : <Trash2 className="w-3 h-3" />}
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
