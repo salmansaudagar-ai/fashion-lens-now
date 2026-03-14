@@ -32,7 +32,7 @@ const imageUrlToBase64 = async (imageUrl: string): Promise<string> => {
 };
 
 export const OutfitSelectionStep: React.FC = () => {
-  const { selectedOutfit, selectOutfitItem, setCurrentStep, setGeneratedLook, capturedImages, sessionToken, sessionId, pendingTryItem, setPendingTryItem, excludedCategory, setExcludedCategory } = useVTO();
+  const { selectedOutfit, selectOutfitItem, setCurrentStep, setGeneratedLook, capturedImages, sessionToken, sessionId, pendingTryItem, setPendingTryItem, excludedCategory, setExcludedCategory, setServerMeasurements } = useVTO();
   // Auto-set filter when coming from outfit builder's "Add ..." button
   const [activeFilter, setActiveFilter] = useState<FilterCategory>(() => {
     const target = sessionStorage.getItem('vto_target_category');
@@ -240,6 +240,12 @@ export const OutfitSelectionStep: React.FC = () => {
         sessionStorage.removeItem('vto_layered_base');
         setExcludedCategory(null);
         setGeneratedLook(data.imageUrl);
+
+        // Store server-returned measurements (from Gemini) for the result screen
+        if (data.measurements && Object.keys(data.measurements).length > 0) {
+          setServerMeasurements(data.measurements);
+          sessionStorage.setItem('vto_server_measurements', JSON.stringify(data.measurements));
+        }
 
         // Store multi-model comparison info for the result screen & comparison page
         // Use localStorage so /compare page works even in a different tab

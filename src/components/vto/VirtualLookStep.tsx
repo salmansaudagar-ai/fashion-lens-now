@@ -20,7 +20,7 @@ interface ModelResultInfo {
 }
 
 export const VirtualLookStep: React.FC = () => {
-  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId, clearOutfitCategory, setExcludedCategory } = useVTO();
+  const { generatedLook, selectedOutfit, setCurrentStep, setGeneratedLook, resetFlow, capturedImages, sessionToken, sessionId, clearOutfitCategory, setExcludedCategory, serverMeasurements } = useVTO();
   const navigate = useNavigate();
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
@@ -88,10 +88,33 @@ export const VirtualLookStep: React.FC = () => {
     }
   }, []);
 
-  // Auto-extract body measurements from full-body photo
+  // Use server measurements from Gemini (returned with VTO generation response)
   useEffect(() => {
+    if (measurements) return; // already have measurements
+
+    // Check server measurements from VTO context or sessionStorage
+    const serverM = serverMeasurements || (() => {
+      try { return JSON.parse(sessionStorage.getItem('vto_server_measurements') || 'null'); } catch { return null; }
+    })();
+
+    if (serverM && Object.keys(serverM).length > 0) {
+      // Map server measurements (Gemini snake_case) to our BodyMeasurements format
+      const mapped: BodyMeasurements = {
+        shoulderWidth: serverM.shoulder_width_cm ?? serverM.shoulderWidth ?? 0,
+        chestEstimate: serverM.chest_cm ?? serverM.chestEstimate ?? 0,
+        waistEstimate: serverM.waist_cm ?? serverM.waistEstimate ?? 0,
+        hipWidth: serverM.hip_cm ?? serverM.hipWidth ?? 0,
+        topSize: serverM.recommended_size ?? serverM.topSize ?? 'M',
+        bottomSize: serverM.recommended_trouser ? `W${serverM.recommended_trouser}` : (serverM.bottomSize ?? 'M'),
+      };
+      setMeasurements(mapped);
+      setMeasuringInProgress(false);
+      return;
+    }
+
+    // Fallback: client-side extraction if no server measurements
     const fullBody = capturedImages.fullBody || sessionStorage.getItem('vto_full_body');
-    if (!fullBody || measurements || measuringInProgress) return;
+    if (!fullBody || measuringInProgress) return;
 
     setMeasuringInProgress(true);
     extractBodyMeasurements(fullBody, 170).then((m) => {
@@ -101,7 +124,7 @@ export const VirtualLookStep: React.FC = () => {
       }
       setMeasuringInProgress(false);
     });
-  }, [capturedImages.fullBody]);
+  }, [capturedImages.fullBody, serverMeasurements]);
 
   // Play completion sound
   const playCompletionSound = () => {
@@ -314,6 +337,12 @@ export const VirtualLookStep: React.FC = () => {
     setVideoUrl(null);
     setIsGeneratingVideo(false);
     setShowTabs(false);
+    // Reset measurements and rating for new outfit
+    setMeasurements(null);
+    setMeasuringInProgress(false);
+    setRatingSubmitted(false);
+    setSelectedThumbs(null);
+    setSelectedIssues([]);
     setCurrentStep(3);
   };
 

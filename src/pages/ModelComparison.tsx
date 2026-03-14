@@ -178,6 +178,20 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
   allSessions: Session[];
 }) {
   const PAGE_SIZE = 20;
+  const [view, setView] = useState<'sessions' | 'generations'>('generations');
+  const [generations, setGenerations] = useState<any[]>([]);
+  const [genLoading, setGenLoading] = useState(false);
+
+  // Fetch generations for the Generations view
+  useEffect(() => {
+    if (view !== 'generations') return;
+    setGenLoading(true);
+    fetch(`${SUPABASE_URL}/rest/v1/vto_generations?order=created_at.desc&limit=50&select=id,session_id,garment_url,garment_description,category,generated_look_url,generated_video_url,body_measurements,duration_ms,created_at`, { headers: hdrs })
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setGenerations(data); })
+      .catch(() => {})
+      .finally(() => setGenLoading(false));
+  }, [view]);
 
   const exportCSV = () => {
     const rows = allSessions.map(s => ({
@@ -214,53 +228,99 @@ function SessionsTab({ sessions, totalCount, page, setPage, stats, selectedSessi
         ))}
       </div>
 
-      {/* Export button */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+      {/* View toggle + Export */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: 2 }}>
+          {(['generations', 'sessions'] as const).map(v => (
+            <button key={v} onClick={() => setView(v)} style={{
+              padding: '6px 16px', borderRadius: 6, fontSize: 12, border: 'none', cursor: 'pointer', fontWeight: 600,
+              background: view === v ? 'rgba(99,102,241,0.2)' : 'transparent',
+              color: view === v ? '#818cf8' : '#888',
+            }}>{v === 'generations' ? 'Try-Ons' : 'Sessions'}</button>
+          ))}
+        </div>
         <button onClick={exportCSV} style={{ ...btn, display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 14 }}>&#8615;</span> Export CSV
         </button>
       </div>
 
-      {/* Table */}
-      <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
-              {['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens'].map(h => (
-                <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.map(s => (
-              <tr key={s.id} onClick={() => setSelectedSession(s)}
-                style={{ cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 0.15s' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                <td style={td}>{fmtTime(s.created_at)}</td>
-                <td style={td}><span style={{ color: s.registration_status === 'registered' ? '#22c55e' : s.registration_status === 'generating' ? '#f59e0b' : '#888', fontSize: 12, fontWeight: 500 }}>{s.registration_status}</span></td>
-                <td style={td}>{s.full_name || s.phone || '—'}</td>
-                <td style={td}><Thumb url={s.selfie_url} /></td>
-                <td style={td}><Thumb url={s.full_body_url} /></td>
-                <td style={td}><Thumb url={s.garment_url} /></td>
-                <td style={td}><Thumb url={s.generated_look_url} /></td>
-                <td style={td}>{s.generated_video_url ? <span style={{ color: '#22c55e', fontSize: 12 }}>YES</span> : <span style={{ color: '#444' }}>—</span>}</td>
-                <td style={td}><span style={{ fontWeight: 600 }}>{s.body_measurements?.recommended_size || '—'}</span></td>
-                <td style={td}>{s.generation_count}</td>
+      {/* Generations View — each garment try-on as separate row */}
+      {view === 'generations' && (
+        <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                {['Time', 'Garment', 'Category', 'VTO Result', 'Video', 'Size', 'Duration', 'Description'].map(h => (
+                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, fontSize: 13, color: '#888' }}>
-        <span>Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE) || 1} ({totalCount} total)</span>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={btn}>Prev</button>
-          <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount} style={btn}>Next</button>
+            </thead>
+            <tbody>
+              {genLoading ? (
+                <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>Loading...</td></tr>
+              ) : generations.length === 0 ? (
+                <tr><td colSpan={8} style={{ ...td, textAlign: 'center', color: '#666', padding: 40 }}>No try-ons yet. They'll appear here after the first VTO generation.</td></tr>
+              ) : generations.map(g => (
+                <tr key={g.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td style={td}>{fmtTime(g.created_at)}</td>
+                  <td style={td}><Thumb url={g.garment_url} /></td>
+                  <td style={td}><span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(255,255,255,0.06)', color: '#ccc' }}>{g.category || '—'}</span></td>
+                  <td style={td}><Thumb url={g.generated_look_url} /></td>
+                  <td style={td}>{g.generated_video_url ? <span style={{ color: '#22c55e', fontSize: 12 }}>YES</span> : <span style={{ color: '#444' }}>—</span>}</td>
+                  <td style={td}><span style={{ fontWeight: 600 }}>{g.body_measurements?.recommended_size || '—'}</span></td>
+                  <td style={td}>{g.duration_ms ? `${(g.duration_ms / 1000).toFixed(1)}s` : '—'}</td>
+                  <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.garment_description || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
+
+      {/* Sessions View — original view */}
+      {view === 'sessions' && (
+        <>
+          <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                  {['Time', 'Status', 'User', 'Selfie', 'Full Body', 'Garment', 'VTO Result', 'Video', 'Size', 'Gens'].map(h => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map(s => (
+                  <tr key={s.id} onClick={() => setSelectedSession(s)}
+                    style={{ cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)', transition: 'background 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                    <td style={td}>{fmtTime(s.created_at)}</td>
+                    <td style={td}><span style={{ color: s.registration_status === 'registered' ? '#22c55e' : s.registration_status === 'generating' ? '#f59e0b' : '#888', fontSize: 12, fontWeight: 500 }}>{s.registration_status}</span></td>
+                    <td style={td}>{s.full_name || s.phone || '—'}</td>
+                    <td style={td}><Thumb url={s.selfie_url} /></td>
+                    <td style={td}><Thumb url={s.full_body_url} /></td>
+                    <td style={td}><Thumb url={s.garment_url} /></td>
+                    <td style={td}><Thumb url={s.generated_look_url} /></td>
+                    <td style={td}>{s.generated_video_url ? <span style={{ color: '#22c55e', fontSize: 12 }}>YES</span> : <span style={{ color: '#444' }}>—</span>}</td>
+                    <td style={td}><span style={{ fontWeight: 600 }}>{s.body_measurements?.recommended_size || '—'}</span></td>
+                    <td style={td}>{s.generation_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, fontSize: 13, color: '#888' }}>
+            <span>Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE) || 1} ({totalCount} total)</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} style={btn}>Prev</button>
+              <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= totalCount} style={btn}>Next</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

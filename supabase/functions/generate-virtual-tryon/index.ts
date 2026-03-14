@@ -554,13 +554,13 @@ serve(async (req) => {
 
     console.log(`[VTO] Session ${session.id} — starting Gemini VTO generation`);
 
-    // Signal the display screen
+    // Clear old video URL and signal display screen that generation is in progress
+    // This ensures the tablet's video polling doesn't find a stale video from previous generation
     try {
-      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/update-session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionToken, updates: { registration_status: "generating" } }),
-      });
+      await supabase
+        .from("vto_sessions")
+        .update({ registration_status: "generating", generated_video_url: null })
+        .eq("id", session.id);
     } catch (_) { /* non-critical */ }
 
     // Strip base64 prefixes for Gemini (it uses raw base64)
@@ -679,6 +679,25 @@ serve(async (req) => {
         prompt_version: result.promptVersion ? `${result.promptKey}:${result.promptVersion}` : null,
       })
       .eq("id", session.id);
+
+    // Also insert into vto_generations for per-garment tracking in dashboard
+    supabase
+      .from("vto_generations")
+      .insert({
+        session_id: session.id,
+        garment_url: garmentUrl,
+        garment_description: garmentDescription,
+        category,
+        generated_look_url: imageUrl,
+        body_measurements: Object.keys(measurements).length > 0 ? measurements : null,
+        customer_profile: profile,
+        prompt_version: result.promptVersion ? `${result.promptKey}:${result.promptVersion}` : null,
+        duration_ms: result.durationMs,
+      })
+      .then(({ error: genErr }) => {
+        if (genErr) console.error("[VTO] Failed to insert generation row:", genErr);
+        else console.log("[VTO] Generation row inserted for dashboard tracking");
+      });
 
     console.log(`[VTO] Done! Gemini VTO ${result.durationMs}ms, measurements: ${Object.keys(measurements).length > 0 ? 'yes' : 'no'}, count: ${session.generation_count + 1}`);
 

@@ -24,6 +24,8 @@ interface VTOContextType {
   setPendingTryItem: (item: OutfitItem | null) => void;
   excludedCategory: OutfitCategory | null;
   setExcludedCategory: (category: OutfitCategory | null) => void;
+  serverMeasurements: Record<string, any> | null;
+  setServerMeasurements: (m: Record<string, any> | null) => void;
 }
 
 const initialSelectedOutfit: SelectedOutfit = {
@@ -50,6 +52,7 @@ export const VTOProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [pendingTryItem, setPendingTryItem] = useState<OutfitItem | null>(null);
   const [excludedCategory, setExcludedCategory] = useState<OutfitCategory | null>(null);
+  const [serverMeasurements, setServerMeasurements] = useState<Record<string, any> | null>(null);
 
   const selectOutfitItem = (item: OutfitItem) => {
     setSelectedOutfit(prev => ({
@@ -76,6 +79,7 @@ export const VTOProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCustomerPhone('');
     setPendingTryItem(null);
     setExcludedCategory(null);
+    setServerMeasurements(null);
   };
 
   return (
@@ -103,6 +107,8 @@ export const VTOProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setPendingTryItem,
         excludedCategory,
         setExcludedCategory,
+        serverMeasurements,
+        setServerMeasurements,
       }}
     >
       {children}

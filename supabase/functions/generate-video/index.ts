@@ -137,7 +137,7 @@ serve(async (req) => {
     const isEthnic = ethnicity === "south-asian" || ethnicity === "southeast-asian";
     const videoPromptKey = isEthnic ? "video_ethnic" : "video_western";
 
-    const defaultVideoPrompt = "A fashion model poses subtly with gentle movement, slight turn and sway, professional studio lighting, fashion photography, cinematic quality, smooth slow motion";
+    const defaultVideoPrompt = "A fashion model poses subtly with gentle movement, slight turn and sway, professional studio lighting, fashion photography, cinematic quality, smooth slow motion. CRITICAL: The first frame and last frame of the video must be visually identical to create a seamless perfect loop when played on repeat.";
 
     let prompt = defaultVideoPrompt;
     let videoPromptVersion = "default";
@@ -268,6 +268,21 @@ serve(async (req) => {
       .from("vto_sessions")
       .update({ generated_video_url: videoUrl })
       .eq("id", sessionId);
+
+    // Also update the latest generation row for this session
+    const { data: latestGen } = await supabase
+      .from("vto_generations")
+      .select("id")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+    if (latestGen) {
+      await supabase
+        .from("vto_generations")
+        .update({ generated_video_url: videoUrl })
+        .eq("id", latestGen.id);
+    }
 
     const totalMs = Date.now() - start;
     console.log(`[Video] Done! ${totalMs}ms, ${(videoBytes.length / 1024 / 1024).toFixed(1)} MB`);
